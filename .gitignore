@@ -1,0 +1,40 @@
+## .NET
+bin/
+obj/
+out/
+publish/
+artifacts/
+*.user
+*.suo
+*.userprefs
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+
+## Tooling
+.idea/
+*.rsuser
+
+## Environment / secrets
+appsettings.Local.json
+appsettings.Development.json
+appsettings.*.Local.json
+.env
+.env.*
+!.env.example
+
+## SQLite
+*.db
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+## Logs
+*.log
+logs/
+
+## OS
+Thumbs.db
+.DS_Store

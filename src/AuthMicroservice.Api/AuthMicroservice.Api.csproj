@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>AuthMicroservice.Api</RootNamespace>
+    <AssemblyName>AuthMicroservice.Api</AssemblyName>
+    <UserSecretsId>authmicroservice-api-4a1d0e69-b6d5-4b91-b3b0-42dbecfd80fb</UserSecretsId>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AuthMicroservice.Core\AuthMicroservice.Core.csproj" />
+    <ProjectReference Include="..\AuthMicroservice.Migrations.SqlServer\AuthMicroservice.Migrations.SqlServer.csproj" />
+    <ProjectReference Include="..\AuthMicroservice.Migrations.Postgres\AuthMicroservice.Migrations.Postgres.csproj" />
+    <ProjectReference Include="..\AuthMicroservice.Migrations.Sqlite\AuthMicroservice.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\AuthMicroservice.Migrations.InMemory\AuthMicroservice.Migrations.InMemory.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

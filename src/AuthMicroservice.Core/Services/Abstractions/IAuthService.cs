@@ -1,0 +1,30 @@
+using AuthMicroservice.Core.Contracts.Common;
+using AuthMicroservice.Core.Contracts.Requests;
+using AuthMicroservice.Core.Contracts.Responses;
+
+namespace AuthMicroservice.Core.Services.Abstractions;
+
+public interface IAuthService
+{
+    Task<AuthResult<AuthResponse>> RegisterAsync(RegisterRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<AuthResponse>> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<AuthResponse>> RefreshAsync(RefreshRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> LogoutAsync(LogoutRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> LogoutAllAsync(Guid userId, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> ForgotPasswordAsync(ForgotPasswordRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> VerifyEmailAsync(VerifyEmailRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> ResendVerificationAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default);
+
+    Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default);
+}

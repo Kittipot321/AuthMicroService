@@ -1,0 +1,43 @@
+services:
+  authdb:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: auth-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-Your_password123}"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - authdb-data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$${MSSQL_SA_PASSWORD}" -Q "SELECT 1" -C -N -o /dev/null
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  auth-api:
+    build:
+      context: .
+      dockerfile: src/AuthMicroservice.Api/Dockerfile
+    container_name: auth-api
+    depends_on:
+      authdb:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Production"
+      AuthMicroservice__Database__Provider: "SqlServer"
+      AuthMicroservice__Database__ConnectionString: "Server=authdb,1433;Database=AuthDb;User Id=sa;Password=${MSSQL_SA_PASSWORD:-Your_password123};TrustServerCertificate=True"
+      AuthMicroservice__Database__AutoMigrate: "true"
+      AuthMicroservice__Database__SeedDefaults: "true"
+      AuthMicroservice__Jwt__Key: "${JWT_KEY:?Set JWT_KEY (>= 32 chars) in .env or environment}"
+      AuthMicroservice__Jwt__Issuer: "AuthMicroservice"
+      AuthMicroservice__Jwt__Audience: "AuthMicroservice.Clients"
+      AuthMicroservice__TokenLinks__EmailVerificationBaseUrl: "http://localhost:8080/verify"
+      AuthMicroservice__TokenLinks__PasswordResetBaseUrl: "http://localhost:8080/reset"
+
+volumes:
+  authdb-data:

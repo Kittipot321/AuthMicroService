@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AuthMicroservice.Migrations.Sqlite</RootNamespace>
+    <AssemblyName>AuthMicroservice.Migrations.Sqlite</AssemblyName>
+    <PackageId>Synergy.AuthMicroservice.Migrations.Sqlite</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>SQLite EF Core migrations for AuthMicroservice.Core. Install alongside AuthMicroservice.Core when using the SQLite provider.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AuthMicroservice.Core\AuthMicroservice.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

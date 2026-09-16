@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AuthMicroservice.Migrations.Postgres</RootNamespace>
+    <AssemblyName>AuthMicroservice.Migrations.Postgres</AssemblyName>
+    <PackageId>Kittipot.AuthMicroservice.Migrations.Postgres</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>PostgreSQL EF Core migrations for AuthMicroservice.Core. Install alongside AuthMicroservice.Core when using the Npgsql provider.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AuthMicroservice.Core\AuthMicroservice.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+</Project>

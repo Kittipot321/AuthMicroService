@@ -1,0 +1,21 @@
+services:
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: auth-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  auth-api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      AuthMicroservice__Email__Enabled: "true"
+      AuthMicroservice__Email__Smtp__Host: "mailhog"
+      AuthMicroservice__Email__Smtp__Port: "1025"
+      AuthMicroservice__Email__Smtp__UseStartTls: "false"
+      AuthMicroservice__Email__Smtp__UseSsl: "false"
+      AuthMicroservice__Email__FromAddress: "no-reply@auth.local"
+      AuthMicroservice__Email__FromName: "AuthMicroservice (dev)"
+      AuthMicroservice__EnableSwagger: "true"
+    depends_on:
+      - mailhog
