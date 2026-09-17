@@ -48,4 +48,5 @@ public sealed class EndpointOptions
     public EndpointToggle Me { get; set; } = new();
     public EndpointToggle Health { get; set; } = new();
     public EndpointToggle ExternalGoogle { get; set; } = new();
+    public EndpointToggle ExternalMicrosoft { get; set; } = new();
 }

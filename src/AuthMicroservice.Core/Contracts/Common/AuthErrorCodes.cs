@@ -16,4 +16,6 @@ public static class AuthErrorCodes
     public const string GoogleEmailNotVerified = "GOOGLE_EMAIL_NOT_VERIFIED";
     public const string EmailExistsUnverified = "EMAIL_EXISTS_UNVERIFIED";
     public const string GoogleLoginDisabled = "GOOGLE_LOGIN_DISABLED";
+    public const string InvalidMicrosoftToken = "INVALID_MICROSOFT_TOKEN";
+    public const string MicrosoftLoginDisabled = "MICROSOFT_LOGIN_DISABLED";
 }

@@ -12,6 +12,7 @@ namespace AuthMicroservice.Core.Services;
 internal sealed class AuthService : IAuthService
 {
     internal const string GoogleLoginProvider = "Google";
+    internal const string MicrosoftLoginProvider = "Microsoft";
 
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
@@ -19,6 +20,7 @@ internal sealed class AuthService : IAuthService
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IEmailService _emailService;
     private readonly IGoogleTokenValidator _googleTokenValidator;
+    private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IClock _clock;
     private readonly ILogger<AuthService> _logger;
 
@@ -29,6 +31,7 @@ internal sealed class AuthService : IAuthService
         IRefreshTokenService refreshTokenService,
         IEmailService emailService,
         IGoogleTokenValidator googleTokenValidator,
+        IMicrosoftTokenValidator microsoftTokenValidator,
         IClock clock,
         ILogger<AuthService> logger)
     {
@@ -38,6 +41,7 @@ internal sealed class AuthService : IAuthService
         _refreshTokenService = refreshTokenService;
         _emailService = emailService;
         _googleTokenValidator = googleTokenValidator;
+        _microsoftTokenValidator = microsoftTokenValidator;
         _clock = clock;
         _logger = logger;
     }
@@ -328,6 +332,85 @@ internal sealed class AuthService : IAuthService
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
                     new UserLoginInfo(GoogleLoginProvider, googleUser.Subject, GoogleLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+            }
+        }
+
+        if (user.IsDeactivated)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public async Task<AuthResult<AuthResponse>> LoginWithMicrosoftAsync(MicrosoftExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        MicrosoftUserInfo microsoftUser;
+        try
+        {
+            microsoftUser = await _microsoftTokenValidator.ValidateAsync(request.IdToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (MicrosoftTokenValidationException ex)
+        {
+            _logger.LogWarning(ex, "Microsoft id_token validation failed.");
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidMicrosoftToken, "Microsoft id_token is invalid.");
+        }
+
+        var user = await _userManager.FindByLoginAsync(MicrosoftLoginProvider, microsoftUser.Subject).ConfigureAwait(false);
+
+        if (user is null)
+        {
+            var byEmail = await _userManager.FindByEmailAsync(microsoftUser.Email).ConfigureAwait(false);
+            if (byEmail is not null)
+            {
+                if (!byEmail.EmailConfirmed)
+                {
+                    return AuthResult<AuthResponse>.Failure(
+                        AuthErrorCodes.EmailExistsUnverified,
+                        "An unverified local account exists for this email. Verify it before linking a Microsoft login.");
+                }
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    byEmail,
+                    new UserLoginInfo(MicrosoftLoginProvider, microsoftUser.Subject, MicrosoftLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+
+                user = byEmail;
+            }
+            else
+            {
+                user = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    Email = microsoftUser.Email,
+                    UserName = microsoftUser.Email,
+                    FullName = microsoftUser.Name,
+                    EmailConfirmed = true,
+                    CreatedAt = _clock.UtcNow
+                };
+
+                var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
+                if (!createResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(createResult);
+                }
+
+                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    user,
+                    new UserLoginInfo(MicrosoftLoginProvider, microsoftUser.Subject, MicrosoftLoginProvider)).ConfigureAwait(false);
                 if (!linkResult.Succeeded)
                 {
                     return IdentityFailure<AuthResponse>(linkResult);

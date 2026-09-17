@@ -47,6 +47,19 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             errors.Add("AuthMicroservice:ExternalProviders:Google:ClientId is required when Google.Enabled=true.");
         }
 
+        if (options.ExternalProviders.Microsoft.Enabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.Microsoft.ClientId))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:Microsoft:ClientId is required when Microsoft.Enabled=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.Microsoft.TenantId))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:Microsoft:TenantId is required when Microsoft.Enabled=true.");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");

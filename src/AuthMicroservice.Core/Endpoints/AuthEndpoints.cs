@@ -118,6 +118,22 @@ public static class AuthEndpoints
             }
         }
 
+        if (toggles.ExternalMicrosoft.Enabled && options.ExternalProviders.Microsoft.Enabled)
+        {
+            var microsoftBuilder = group.MapPost("/external/microsoft", ExternalMicrosoftAsync)
+                .WithName("AuthExternalMicrosoft")
+                .AllowAnonymous()
+                .Produces<AuthResponse>(StatusCodes.Status200OK)
+                .ProducesValidationProblem()
+                .ProducesProblem(StatusCodes.Status401Unauthorized)
+                .ProducesProblem(StatusCodes.Status409Conflict);
+
+            if (!toggles.ExternalMicrosoft.ShowInSwagger || !swaggerEnabled)
+            {
+                microsoftBuilder.ExcludeFromDescription();
+            }
+        }
+
         return endpoints;
     }
 
@@ -350,6 +366,22 @@ public static class AuthEndpoints
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
+    private static async Task<IResult> ExternalMicrosoftAsync(
+        MicrosoftExternalLoginRequest request,
+        IAuthService authService,
+        IValidator<MicrosoftExternalLoginRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginWithMicrosoftAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -393,6 +425,8 @@ public static class AuthEndpoints
             AuthErrorCodes.InvalidGoogleToken => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.GoogleEmailNotVerified => StatusCodes.Status400BadRequest,
             AuthErrorCodes.GoogleLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidMicrosoftToken => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.MicrosoftLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

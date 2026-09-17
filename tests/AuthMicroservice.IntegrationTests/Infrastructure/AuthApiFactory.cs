@@ -13,6 +13,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 
     public FakeGoogleTokenValidator GoogleTokenValidator { get; } = new();
 
+    public FakeMicrosoftTokenValidator MicrosoftTokenValidator { get; } = new();
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
@@ -35,6 +37,9 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<IGoogleTokenValidator>();
             services.AddSingleton<IGoogleTokenValidator>(GoogleTokenValidator);
+
+            services.RemoveAll<IMicrosoftTokenValidator>();
+            services.AddSingleton<IMicrosoftTokenValidator>(MicrosoftTokenValidator);
         });
     }
 }

@@ -23,6 +23,7 @@
   <ItemGroup Label="JWT / Tokens">
     <PackageVersion Include="System.IdentityModel.Tokens.Jwt" Version="8.1.2" />
     <PackageVersion Include="Microsoft.IdentityModel.Tokens" Version="8.1.2" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.1.2" />
   </ItemGroup>
   <ItemGroup Label="Email">
     <PackageVersion Include="MailKit" Version="4.13.0" />
