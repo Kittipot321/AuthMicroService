@@ -41,6 +41,12 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             }
         }
 
+        if (options.ExternalProviders.Google.Enabled &&
+            string.IsNullOrWhiteSpace(options.ExternalProviders.Google.ClientId))
+        {
+            errors.Add("AuthMicroservice:ExternalProviders:Google:ClientId is required when Google.Enabled=true.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");

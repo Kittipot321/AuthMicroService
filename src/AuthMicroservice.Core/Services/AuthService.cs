@@ -11,11 +11,14 @@ namespace AuthMicroservice.Core.Services;
 
 internal sealed class AuthService : IAuthService
 {
+    internal const string GoogleLoginProvider = "Google";
+
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IEmailService _emailService;
+    private readonly IGoogleTokenValidator _googleTokenValidator;
     private readonly IClock _clock;
     private readonly ILogger<AuthService> _logger;
 
@@ -25,6 +28,7 @@ internal sealed class AuthService : IAuthService
         IJwtTokenService jwtTokenService,
         IRefreshTokenService refreshTokenService,
         IEmailService emailService,
+        IGoogleTokenValidator googleTokenValidator,
         IClock clock,
         ILogger<AuthService> logger)
     {
@@ -33,6 +37,7 @@ internal sealed class AuthService : IAuthService
         _jwtTokenService = jwtTokenService;
         _refreshTokenService = refreshTokenService;
         _emailService = emailService;
+        _googleTokenValidator = googleTokenValidator;
         _clock = clock;
         _logger = logger;
     }
@@ -254,6 +259,92 @@ internal sealed class AuthService : IAuthService
         }
 
         return AuthResult.Success();
+    }
+
+    public async Task<AuthResult<AuthResponse>> LoginWithGoogleAsync(GoogleExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        GoogleUserInfo googleUser;
+        try
+        {
+            googleUser = await _googleTokenValidator.ValidateAsync(request.IdToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (GoogleTokenValidationException ex)
+        {
+            _logger.LogWarning(ex, "Google id_token validation failed.");
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidGoogleToken, "Google id_token is invalid.");
+        }
+
+        if (!googleUser.EmailVerified)
+        {
+            return AuthResult<AuthResponse>.Failure(
+                AuthErrorCodes.GoogleEmailNotVerified,
+                "Google account email is not verified.");
+        }
+
+        var user = await _userManager.FindByLoginAsync(GoogleLoginProvider, googleUser.Subject).ConfigureAwait(false);
+
+        if (user is null)
+        {
+            var byEmail = await _userManager.FindByEmailAsync(googleUser.Email).ConfigureAwait(false);
+            if (byEmail is not null)
+            {
+                if (!byEmail.EmailConfirmed)
+                {
+                    return AuthResult<AuthResponse>.Failure(
+                        AuthErrorCodes.EmailExistsUnverified,
+                        "An unverified local account exists for this email. Verify it before linking a Google login.");
+                }
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    byEmail,
+                    new UserLoginInfo(GoogleLoginProvider, googleUser.Subject, GoogleLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+
+                user = byEmail;
+            }
+            else
+            {
+                user = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    Email = googleUser.Email,
+                    UserName = googleUser.Email,
+                    FullName = googleUser.Name,
+                    EmailConfirmed = true,
+                    CreatedAt = _clock.UtcNow
+                };
+
+                var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
+                if (!createResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(createResult);
+                }
+
+                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    user,
+                    new UserLoginInfo(GoogleLoginProvider, googleUser.Subject, GoogleLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+            }
+        }
+
+        if (user.IsDeactivated)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
     }
 
     public async Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default)

@@ -110,6 +110,7 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<IRefreshTokenService, RefreshTokenService>();
         services.TryAddScoped<IEmailSender, SmtpEmailSender>();
         services.TryAddScoped<IEmailService, EmailService>();
+        services.TryAddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
         services.TryAddScoped<IAuthService, AuthService>();
 
         services.AddHealthChecks()

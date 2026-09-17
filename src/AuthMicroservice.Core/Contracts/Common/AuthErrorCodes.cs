@@ -12,4 +12,8 @@ public static class AuthErrorCodes
     public const string UserNotFound = "USER_NOT_FOUND";
     public const string UserDeactivated = "USER_DEACTIVATED";
     public const string ValidationFailed = "VALIDATION_FAILED";
+    public const string InvalidGoogleToken = "INVALID_GOOGLE_TOKEN";
+    public const string GoogleEmailNotVerified = "GOOGLE_EMAIL_NOT_VERIFIED";
+    public const string EmailExistsUnverified = "EMAIL_EXISTS_UNVERIFIED";
+    public const string GoogleLoginDisabled = "GOOGLE_LOGIN_DISABLED";
 }

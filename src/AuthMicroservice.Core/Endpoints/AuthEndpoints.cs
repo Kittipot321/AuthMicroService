@@ -102,6 +102,22 @@ public static class AuthEndpoints
             .Produces(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status503ServiceUnavailable));
 
+        if (toggles.ExternalGoogle.Enabled && options.ExternalProviders.Google.Enabled)
+        {
+            var googleBuilder = group.MapPost("/external/google", ExternalGoogleAsync)
+                .WithName("AuthExternalGoogle")
+                .AllowAnonymous()
+                .Produces<AuthResponse>(StatusCodes.Status200OK)
+                .ProducesValidationProblem()
+                .ProducesProblem(StatusCodes.Status401Unauthorized)
+                .ProducesProblem(StatusCodes.Status409Conflict);
+
+            if (!toggles.ExternalGoogle.ShowInSwagger || !swaggerEnabled)
+            {
+                googleBuilder.ExcludeFromDescription();
+            }
+        }
+
         return endpoints;
     }
 
@@ -318,6 +334,22 @@ public static class AuthEndpoints
         return Results.Json(payload, statusCode: statusCode);
     }
 
+    private static async Task<IResult> ExternalGoogleAsync(
+        GoogleExternalLoginRequest request,
+        IAuthService authService,
+        IValidator<GoogleExternalLoginRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginWithGoogleAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -357,6 +389,10 @@ public static class AuthEndpoints
             AuthErrorCodes.UserLockedOut => StatusCodes.Status423Locked,
             AuthErrorCodes.UserDeactivated => StatusCodes.Status403Forbidden,
             AuthErrorCodes.EmailAlreadyRegistered => StatusCodes.Status409Conflict,
+            AuthErrorCodes.EmailExistsUnverified => StatusCodes.Status409Conflict,
+            AuthErrorCodes.InvalidGoogleToken => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.GoogleEmailNotVerified => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.GoogleLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

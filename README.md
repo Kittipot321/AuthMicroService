@@ -73,8 +73,9 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/change-password` | auth | Requires current password |
 | GET | `/auth/me` | auth | User profile with roles + claims |
 | GET | `/auth/health` | anon | Liveness |
+| POST | `/auth/external/google` | anon | Google id_token → JWT (auto-provision + auto-link). 404 unless `ExternalProviders:Google:Enabled=true` |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `INVALID_GOOGLE_TOKEN`, `GOOGLE_EMAIL_NOT_VERIFIED`, `EMAIL_EXISTS_UNVERIFIED`.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -170,6 +171,12 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "EmailVerificationBaseUrl": "https://app.example.com/verify-email",
       "PasswordResetBaseUrl": "https://app.example.com/reset-password"
     },
+    "ExternalProviders": {
+      "Google": {
+        "Enabled": false,
+        "ClientId": ""
+      }
+    },
     "RoutePrefix": "/auth",
     "EnableSwagger": true
   }
@@ -182,7 +189,39 @@ Secrets are typically supplied via env vars using double-underscore syntax:
 - `AuthMicroservice__Database__ConnectionString`
 - `AuthMicroservice__Email__Smtp__Password`
 
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, or `Email.Enabled=true` without an SMTP host.
+Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or `ExternalProviders.Google.Enabled=true` without a `ClientId`.
+
+## Google OAuth (external login)
+
+`POST /auth/external/google` accepts a Google `id_token` obtained by the client (SPA / mobile) via Google Sign-In and returns the service's own JWT + refresh token. Token exchange only — no cookie/redirect handshake — so the endpoint fits SPA and mobile architectures naturally.
+
+Enable it in `appsettings.json` or via env vars:
+
+```powershell
+$env:AuthMicroservice__ExternalProviders__Google__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__Google__ClientId = "<your>.apps.googleusercontent.com"
+```
+
+Server-side behaviour:
+
+1. Validates `id_token` signature, audience (= `ClientId`), and expiry via Google JWKS.
+2. Rejects with `GOOGLE_EMAIL_NOT_VERIFIED` (400) if Google did not verify the email.
+3. If a link already exists in `AspNetUserLogins` for `(Google, subject)` → issues tokens.
+4. Else if a local user with the same email exists:
+   - `EmailConfirmed=true` → auto-links the Google identity and issues tokens.
+   - `EmailConfirmed=false` → returns `EMAIL_EXISTS_UNVERIFIED` (409). Verify the local account first (via `/auth/verify-email`) before retrying, to prevent account takeover through unverified addresses.
+5. Else → auto-provisions a new `ApplicationUser` with `EmailConfirmed=true`, assigns the `User` role, links the Google identity, and issues tokens.
+
+Sample request:
+
+```http
+POST /auth/external/google
+Content-Type: application/json
+
+{ "idToken": "eyJhbGciOi..." }
+```
+
+The endpoint is only registered when `ExternalProviders:Google:Enabled=true`; otherwise it responds 404. The provider is disabled by default in [appsettings.json](src/AuthMicroservice.Api/appsettings.json).
 
 ## EF Core migrations (per provider)
 
@@ -268,6 +307,10 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 
 ## Changelog
 
+### v1.1.0 — 2026-09-16
+
+- **Google OAuth external login**: new `POST /auth/external/google` endpoint accepting a Google `id_token` and returning the service's JWT + refresh token. Token-exchange flow only (no cookie/redirect). Auto-provisions new users with `EmailConfirmed=true`, auto-links Google identities to existing verified local accounts, and rejects link attempts against unverified local accounts (`EMAIL_EXISTS_UNVERIFIED`) to prevent takeover. Package: `Google.Apis.Auth`. Config: `AuthMicroservice:ExternalProviders:Google:{Enabled, ClientId}` — disabled by default; endpoint returns 404 unless enabled. Startup fail-fast if `Enabled=true` without `ClientId`. Full unit + integration test coverage via `IGoogleTokenValidator` seam.
+
 ### v1.0.2 — 2026-09-16
 
 - **InMemory adapter packable**: เพิ่ม `AuthMicroservice.Migrations.InMemory` เป็น NuGet package ตัวที่ 5 (Core + Migrations.{SqlServer, Postgres, Sqlite, InMemory}) — ใช้ `.UseInMemory()` extension สำหรับ tests/demos (ไม่แนะนำสำหรับ production เพราะ data หายทุก restart)
@@ -287,7 +330,7 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 - Standalone API + library-mode consumer + Docker Compose + Sample + Unit/Integration tests
 
 ## Future: Next Plan
-- v1.1 candidates: 2FA (TOTP), external OAuth providers (Google/Microsoft), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
+- v1.1 candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ v1.1.0 / Microsoft / Apple), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
 - Ops: HealthChecks (DB + SMTP), OpenTelemetry traces, structured logging correlationId
 
 ```

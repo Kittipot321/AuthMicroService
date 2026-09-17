@@ -26,5 +26,7 @@ public interface IAuthService
 
     Task<AuthResult> ResendVerificationAsync(ResendVerificationRequest request, CancellationToken cancellationToken = default);
 
+    Task<AuthResult<AuthResponse>> LoginWithGoogleAsync(GoogleExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
     Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default);
 }

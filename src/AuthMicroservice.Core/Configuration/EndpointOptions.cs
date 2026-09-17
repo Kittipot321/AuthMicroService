@@ -47,4 +47,5 @@ public sealed class EndpointOptions
     public EndpointToggle ChangePassword { get; set; } = new();
     public EndpointToggle Me { get; set; } = new();
     public EndpointToggle Health { get; set; } = new();
+    public EndpointToggle ExternalGoogle { get; set; } = new();
 }

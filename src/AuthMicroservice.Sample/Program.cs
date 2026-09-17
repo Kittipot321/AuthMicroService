@@ -1,10 +1,11 @@
 using AuthMicroservice.Core.Extensions;
 using AuthMicroservice.Migrations.InMemory;
+using AuthMicroservice.Migrations.Sqlite;
 using Microsoft.AspNetCore.Authorization;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddAuthMicroservice(builder.Configuration).UseInMemory();
+builder.Services.AddAuthMicroservice(builder.Configuration).UseSqlite();
 
 var app = builder.Build();
 

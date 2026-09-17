@@ -10,6 +10,8 @@ public sealed class AuthMicroserviceOptions
 
     public EmailOptions Email { get; set; } = new();
 
+    public ExternalProvidersOptions ExternalProviders { get; set; } = new();
+
     public IdentitySettings Identity { get; set; } = new();
 
     public TokenLinkOptions TokenLinks { get; set; } = new();
