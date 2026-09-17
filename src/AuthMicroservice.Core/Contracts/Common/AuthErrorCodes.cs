@@ -18,4 +18,7 @@ public static class AuthErrorCodes
     public const string GoogleLoginDisabled = "GOOGLE_LOGIN_DISABLED";
     public const string InvalidMicrosoftToken = "INVALID_MICROSOFT_TOKEN";
     public const string MicrosoftLoginDisabled = "MICROSOFT_LOGIN_DISABLED";
+    public const string InvalidFacebookToken = "INVALID_FACEBOOK_TOKEN";
+    public const string FacebookEmailRequired = "FACEBOOK_EMAIL_REQUIRED";
+    public const string FacebookLoginDisabled = "FACEBOOK_LOGIN_DISABLED";
 }

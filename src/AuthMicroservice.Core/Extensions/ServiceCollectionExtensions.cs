@@ -112,6 +112,8 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<IEmailService, EmailService>();
         services.TryAddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
         services.TryAddSingleton<IMicrosoftTokenValidator, MicrosoftTokenValidator>();
+        services.AddHttpClient(FacebookTokenValidator.HttpClientName);
+        services.TryAddSingleton<IFacebookTokenValidator, FacebookTokenValidator>();
         services.TryAddScoped<IAuthService, AuthService>();
 
         services.AddHealthChecks()

@@ -13,6 +13,7 @@ internal sealed class AuthService : IAuthService
 {
     internal const string GoogleLoginProvider = "Google";
     internal const string MicrosoftLoginProvider = "Microsoft";
+    internal const string FacebookLoginProvider = "Facebook";
 
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
@@ -21,6 +22,7 @@ internal sealed class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly IGoogleTokenValidator _googleTokenValidator;
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
+    private readonly IFacebookTokenValidator _facebookTokenValidator;
     private readonly IClock _clock;
     private readonly ILogger<AuthService> _logger;
 
@@ -32,6 +34,7 @@ internal sealed class AuthService : IAuthService
         IEmailService emailService,
         IGoogleTokenValidator googleTokenValidator,
         IMicrosoftTokenValidator microsoftTokenValidator,
+        IFacebookTokenValidator facebookTokenValidator,
         IClock clock,
         ILogger<AuthService> logger)
     {
@@ -42,6 +45,7 @@ internal sealed class AuthService : IAuthService
         _emailService = emailService;
         _googleTokenValidator = googleTokenValidator;
         _microsoftTokenValidator = microsoftTokenValidator;
+        _facebookTokenValidator = facebookTokenValidator;
         _clock = clock;
         _logger = logger;
     }
@@ -411,6 +415,92 @@ internal sealed class AuthService : IAuthService
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
                     new UserLoginInfo(MicrosoftLoginProvider, microsoftUser.Subject, MicrosoftLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+            }
+        }
+
+        if (user.IsDeactivated)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public async Task<AuthResult<AuthResponse>> LoginWithFacebookAsync(FacebookExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        FacebookUserInfo facebookUser;
+        try
+        {
+            facebookUser = await _facebookTokenValidator.ValidateAsync(request.AccessToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (FacebookTokenValidationException ex)
+        {
+            _logger.LogWarning(ex, "Facebook access_token validation failed.");
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidFacebookToken, "Facebook access token is invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(facebookUser.Email))
+        {
+            return AuthResult<AuthResponse>.Failure(
+                AuthErrorCodes.FacebookEmailRequired,
+                "Facebook account does not have an accessible email. Grant email permission or use another provider.");
+        }
+
+        var user = await _userManager.FindByLoginAsync(FacebookLoginProvider, facebookUser.Subject).ConfigureAwait(false);
+
+        if (user is null)
+        {
+            var byEmail = await _userManager.FindByEmailAsync(facebookUser.Email).ConfigureAwait(false);
+            if (byEmail is not null)
+            {
+                if (!byEmail.EmailConfirmed)
+                {
+                    return AuthResult<AuthResponse>.Failure(
+                        AuthErrorCodes.EmailExistsUnverified,
+                        "An unverified local account exists for this email. Verify it before linking a Facebook login.");
+                }
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    byEmail,
+                    new UserLoginInfo(FacebookLoginProvider, facebookUser.Subject, FacebookLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+
+                user = byEmail;
+            }
+            else
+            {
+                user = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    Email = facebookUser.Email,
+                    UserName = facebookUser.Email,
+                    FullName = facebookUser.Name,
+                    EmailConfirmed = true,
+                    CreatedAt = _clock.UtcNow
+                };
+
+                var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
+                if (!createResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(createResult);
+                }
+
+                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    user,
+                    new UserLoginInfo(FacebookLoginProvider, facebookUser.Subject, FacebookLoginProvider)).ConfigureAwait(false);
                 if (!linkResult.Succeeded)
                 {
                     return IdentityFailure<AuthResponse>(linkResult);

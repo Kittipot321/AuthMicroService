@@ -5,6 +5,8 @@ public sealed class ExternalProvidersOptions
     public GoogleProviderOptions Google { get; set; } = new();
 
     public MicrosoftProviderOptions Microsoft { get; set; } = new();
+
+    public FacebookProviderOptions Facebook { get; set; } = new();
 }
 
 public sealed class GoogleProviderOptions
@@ -26,4 +28,15 @@ public sealed class MicrosoftProviderOptions
 
     // "common" | "organizations" | "consumers" | specific tenant GUID
     public string TenantId { get; set; } = "common";
+}
+
+public sealed class FacebookProviderOptions
+{
+    public bool Enabled { get; set; }
+
+    public string AppId { get; set; } = string.Empty;
+
+    public string AppSecret { get; set; } = string.Empty;
+
+    public string GraphApiVersion { get; set; } = "v18.0";
 }

@@ -30,5 +30,7 @@ public interface IAuthService
 
     Task<AuthResult<AuthResponse>> LoginWithMicrosoftAsync(MicrosoftExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default);
 
+    Task<AuthResult<AuthResponse>> LoginWithFacebookAsync(FacebookExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
     Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default);
 }

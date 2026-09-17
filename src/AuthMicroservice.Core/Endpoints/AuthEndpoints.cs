@@ -134,6 +134,22 @@ public static class AuthEndpoints
             }
         }
 
+        if (toggles.ExternalFacebook.Enabled && options.ExternalProviders.Facebook.Enabled)
+        {
+            var facebookBuilder = group.MapPost("/external/facebook", ExternalFacebookAsync)
+                .WithName("AuthExternalFacebook")
+                .AllowAnonymous()
+                .Produces<AuthResponse>(StatusCodes.Status200OK)
+                .ProducesValidationProblem()
+                .ProducesProblem(StatusCodes.Status401Unauthorized)
+                .ProducesProblem(StatusCodes.Status409Conflict);
+
+            if (!toggles.ExternalFacebook.ShowInSwagger || !swaggerEnabled)
+            {
+                facebookBuilder.ExcludeFromDescription();
+            }
+        }
+
         return endpoints;
     }
 
@@ -382,6 +398,22 @@ public static class AuthEndpoints
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
+    private static async Task<IResult> ExternalFacebookAsync(
+        FacebookExternalLoginRequest request,
+        IAuthService authService,
+        IValidator<FacebookExternalLoginRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginWithFacebookAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -427,6 +459,9 @@ public static class AuthEndpoints
             AuthErrorCodes.GoogleLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.InvalidMicrosoftToken => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.MicrosoftLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidFacebookToken => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.FacebookEmailRequired => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.FacebookLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

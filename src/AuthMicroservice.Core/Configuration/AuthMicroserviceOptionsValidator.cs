@@ -60,6 +60,19 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             }
         }
 
+        if (options.ExternalProviders.Facebook.Enabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.Facebook.AppId))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:Facebook:AppId is required when Facebook.Enabled=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.Facebook.AppSecret))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:Facebook:AppSecret is required when Facebook.Enabled=true.");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");
