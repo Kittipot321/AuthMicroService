@@ -21,4 +21,7 @@ public static class AuthErrorCodes
     public const string InvalidFacebookToken = "INVALID_FACEBOOK_TOKEN";
     public const string FacebookEmailRequired = "FACEBOOK_EMAIL_REQUIRED";
     public const string FacebookLoginDisabled = "FACEBOOK_LOGIN_DISABLED";
+    public const string InvalidLineToken = "INVALID_LINE_TOKEN";
+    public const string LineEmailRequired = "LINE_EMAIL_REQUIRED";
+    public const string LineLoginDisabled = "LINE_LOGIN_DISABLED";
 }

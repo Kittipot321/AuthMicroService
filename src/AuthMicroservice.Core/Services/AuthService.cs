@@ -14,6 +14,7 @@ internal sealed class AuthService : IAuthService
     internal const string GoogleLoginProvider = "Google";
     internal const string MicrosoftLoginProvider = "Microsoft";
     internal const string FacebookLoginProvider = "Facebook";
+    internal const string LineLoginProvider = "Line";
 
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
@@ -23,6 +24,7 @@ internal sealed class AuthService : IAuthService
     private readonly IGoogleTokenValidator _googleTokenValidator;
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IFacebookTokenValidator _facebookTokenValidator;
+    private readonly ILineTokenValidator _lineTokenValidator;
     private readonly IClock _clock;
     private readonly ILogger<AuthService> _logger;
 
@@ -35,6 +37,7 @@ internal sealed class AuthService : IAuthService
         IGoogleTokenValidator googleTokenValidator,
         IMicrosoftTokenValidator microsoftTokenValidator,
         IFacebookTokenValidator facebookTokenValidator,
+        ILineTokenValidator lineTokenValidator,
         IClock clock,
         ILogger<AuthService> logger)
     {
@@ -46,6 +49,7 @@ internal sealed class AuthService : IAuthService
         _googleTokenValidator = googleTokenValidator;
         _microsoftTokenValidator = microsoftTokenValidator;
         _facebookTokenValidator = facebookTokenValidator;
+        _lineTokenValidator = lineTokenValidator;
         _clock = clock;
         _logger = logger;
     }
@@ -501,6 +505,92 @@ internal sealed class AuthService : IAuthService
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
                     new UserLoginInfo(FacebookLoginProvider, facebookUser.Subject, FacebookLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+            }
+        }
+
+        if (user.IsDeactivated)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public async Task<AuthResult<AuthResponse>> LoginWithLineAsync(LineExternalLoginRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        LineUserInfo lineUser;
+        try
+        {
+            lineUser = await _lineTokenValidator.ValidateAsync(request.IdToken, cancellationToken).ConfigureAwait(false);
+        }
+        catch (LineTokenValidationException ex)
+        {
+            _logger.LogWarning(ex, "LINE id_token validation failed.");
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidLineToken, "LINE id_token is invalid.");
+        }
+
+        if (string.IsNullOrWhiteSpace(lineUser.Email))
+        {
+            return AuthResult<AuthResponse>.Failure(
+                AuthErrorCodes.LineEmailRequired,
+                "LINE account did not return an email. Grant email permission in the LINE Login channel and consent, or use another provider.");
+        }
+
+        var user = await _userManager.FindByLoginAsync(LineLoginProvider, lineUser.Subject).ConfigureAwait(false);
+
+        if (user is null)
+        {
+            var byEmail = await _userManager.FindByEmailAsync(lineUser.Email).ConfigureAwait(false);
+            if (byEmail is not null)
+            {
+                if (!byEmail.EmailConfirmed)
+                {
+                    return AuthResult<AuthResponse>.Failure(
+                        AuthErrorCodes.EmailExistsUnverified,
+                        "An unverified local account exists for this email. Verify it before linking a LINE login.");
+                }
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    byEmail,
+                    new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
+                if (!linkResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(linkResult);
+                }
+
+                user = byEmail;
+            }
+            else
+            {
+                user = new ApplicationUser
+                {
+                    Id = Guid.NewGuid(),
+                    Email = lineUser.Email,
+                    UserName = lineUser.Email,
+                    FullName = lineUser.Name,
+                    EmailConfirmed = true,
+                    CreatedAt = _clock.UtcNow
+                };
+
+                var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
+                if (!createResult.Succeeded)
+                {
+                    return IdentityFailure<AuthResponse>(createResult);
+                }
+
+                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+
+                var linkResult = await _userManager.AddLoginAsync(
+                    user,
+                    new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
                 if (!linkResult.Succeeded)
                 {
                     return IdentityFailure<AuthResponse>(linkResult);

@@ -7,6 +7,8 @@ public sealed class ExternalProvidersOptions
     public MicrosoftProviderOptions Microsoft { get; set; } = new();
 
     public FacebookProviderOptions Facebook { get; set; } = new();
+
+    public LineProviderOptions Line { get; set; } = new();
 }
 
 public sealed class GoogleProviderOptions
@@ -39,4 +41,14 @@ public sealed class FacebookProviderOptions
     public string AppSecret { get; set; } = string.Empty;
 
     public string GraphApiVersion { get; set; } = "v18.0";
+}
+
+public sealed class LineProviderOptions
+{
+    public bool Enabled { get; set; }
+
+    // LINE Login channel ID — used both as verify-endpoint client_id and as expected aud claim.
+    public string ChannelId { get; set; } = string.Empty;
+
+    public string VerifyEndpoint { get; set; } = "https://api.line.me/oauth2/v2.1/verify";
 }

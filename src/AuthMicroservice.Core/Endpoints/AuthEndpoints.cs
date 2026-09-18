@@ -150,6 +150,22 @@ public static class AuthEndpoints
             }
         }
 
+        if (toggles.ExternalLine.Enabled && options.ExternalProviders.Line.Enabled)
+        {
+            var lineBuilder = group.MapPost("/external/line", ExternalLineAsync)
+                .WithName("AuthExternalLine")
+                .AllowAnonymous()
+                .Produces<AuthResponse>(StatusCodes.Status200OK)
+                .ProducesValidationProblem()
+                .ProducesProblem(StatusCodes.Status401Unauthorized)
+                .ProducesProblem(StatusCodes.Status409Conflict);
+
+            if (!toggles.ExternalLine.ShowInSwagger || !swaggerEnabled)
+            {
+                lineBuilder.ExcludeFromDescription();
+            }
+        }
+
         return endpoints;
     }
 
@@ -414,6 +430,22 @@ public static class AuthEndpoints
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
+    private static async Task<IResult> ExternalLineAsync(
+        LineExternalLoginRequest request,
+        IAuthService authService,
+        IValidator<LineExternalLoginRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginWithLineAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -462,6 +494,9 @@ public static class AuthEndpoints
             AuthErrorCodes.InvalidFacebookToken => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.FacebookEmailRequired => StatusCodes.Status400BadRequest,
             AuthErrorCodes.FacebookLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidLineToken => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.LineEmailRequired => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.LineLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

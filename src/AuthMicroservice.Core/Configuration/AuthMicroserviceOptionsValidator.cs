@@ -73,6 +73,12 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             }
         }
 
+        if (options.ExternalProviders.Line.Enabled &&
+            string.IsNullOrWhiteSpace(options.ExternalProviders.Line.ChannelId))
+        {
+            errors.Add("AuthMicroservice:ExternalProviders:Line:ChannelId is required when Line.Enabled=true.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");

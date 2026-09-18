@@ -50,4 +50,5 @@ public sealed class EndpointOptions
     public EndpointToggle ExternalGoogle { get; set; } = new();
     public EndpointToggle ExternalMicrosoft { get; set; } = new();
     public EndpointToggle ExternalFacebook { get; set; } = new();
+    public EndpointToggle ExternalLine { get; set; } = new();
 }
