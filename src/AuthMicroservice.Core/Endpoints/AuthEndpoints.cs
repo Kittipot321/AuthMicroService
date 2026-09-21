@@ -569,7 +569,6 @@ public static class AuthEndpoints
             AuthErrorCodes.FacebookEmailRequired => StatusCodes.Status400BadRequest,
             AuthErrorCodes.FacebookLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.InvalidLineToken => StatusCodes.Status401Unauthorized,
-            AuthErrorCodes.LineEmailRequired => StatusCodes.Status400BadRequest,
             AuthErrorCodes.LineLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.ThaIdLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.InvalidThaIdState => StatusCodes.Status400BadRequest,

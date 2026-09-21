@@ -63,7 +63,7 @@ internal sealed class MicrosoftTokenValidator : IMicrosoftTokenValidator
             ValidateLifetime = true
         };
 
-        var handler = new JwtSecurityTokenHandler();
+        var handler = new JwtSecurityTokenHandler { MapInboundClaims = false };
         System.Security.Claims.ClaimsPrincipal principal;
         try
         {

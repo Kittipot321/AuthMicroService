@@ -551,46 +551,50 @@ internal sealed class AuthService : IAuthService
             return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidLineToken, "LINE id_token is invalid.");
         }
 
-        if (string.IsNullOrWhiteSpace(lineUser.Email))
-        {
-            return AuthResult<AuthResponse>.Failure(
-                AuthErrorCodes.LineEmailRequired,
-                "LINE account did not return an email. Grant email permission in the LINE Login channel and consent, or use another provider.");
-        }
-
         var user = await _userManager.FindByLoginAsync(LineLoginProvider, lineUser.Subject).ConfigureAwait(false);
 
         if (user is null)
         {
-            var byEmail = await _userManager.FindByEmailAsync(lineUser.Email).ConfigureAwait(false);
-            if (byEmail is not null)
+            var hasEmail = !string.IsNullOrWhiteSpace(lineUser.Email);
+
+            if (hasEmail)
             {
-                if (!byEmail.EmailConfirmed)
+                var byEmail = await _userManager.FindByEmailAsync(lineUser.Email!).ConfigureAwait(false);
+                if (byEmail is not null)
                 {
-                    return AuthResult<AuthResponse>.Failure(
-                        AuthErrorCodes.EmailExistsUnverified,
-                        "An unverified local account exists for this email. Verify it before linking a LINE login.");
-                }
+                    if (!byEmail.EmailConfirmed)
+                    {
+                        return AuthResult<AuthResponse>.Failure(
+                            AuthErrorCodes.EmailExistsUnverified,
+                            "An unverified local account exists for this email. Verify it before linking a LINE login.");
+                    }
 
-                var linkResult = await _userManager.AddLoginAsync(
-                    byEmail,
-                    new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
-                if (!linkResult.Succeeded)
-                {
-                    return IdentityFailure<AuthResponse>(linkResult);
-                }
+                    var linkResult = await _userManager.AddLoginAsync(
+                        byEmail,
+                        new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
+                    if (!linkResult.Succeeded)
+                    {
+                        return IdentityFailure<AuthResponse>(linkResult);
+                    }
 
-                user = byEmail;
+                    user = byEmail;
+                }
             }
-            else
+
+            if (user is null)
             {
+                // LINE does not always return email (requires channel-level email permission + user consent).
+                // Synthesize a placeholder to satisfy Identity's RequireUniqueEmail; EmailConfirmed=false flags it as unverified.
+                var email = hasEmail ? lineUser.Email! : $"{lineUser.Subject}@line.local";
+                var userName = hasEmail ? lineUser.Email! : $"line.{lineUser.Subject}";
+
                 user = new ApplicationUser
                 {
                     Id = Guid.NewGuid(),
-                    Email = lineUser.Email,
-                    UserName = lineUser.Email,
+                    Email = email,
+                    UserName = userName,
                     FullName = lineUser.Name,
-                    EmailConfirmed = true,
+                    EmailConfirmed = hasEmail,
                     CreatedAt = _clock.UtcNow
                 };
 

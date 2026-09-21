@@ -78,7 +78,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/external/facebook` | anon | Facebook `access_token` → JWT. 404 unless `ExternalProviders:Facebook:Enabled=true` |
 | POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN` / `LINE_EMAIL_REQUIRED`, plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -257,8 +257,8 @@ $env:AuthMicroservice__ExternalProviders__Facebook__AppSecret = "<app-secret>"
 - **Endpoint**: `POST /auth/external/line` — body `{ "idToken": "..." }` (obtained from LIFF via `liff.getIDToken()`)
 - **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, VerifyEndpoint }` (default endpoint `https://api.line.me/oauth2/v2.1/verify`)
 - **Validation**: POST `id_token` + `ChannelId` to LINE verify endpoint — validates `aud` = `ChannelId`, `iss` = `https://access.line.me`, `exp`
-- **Provider quirks**: email is optional in the LINE Login scope — if the user's channel/consent does not include email, returns `LINE_EMAIL_REQUIRED` (400)
-- **Errors**: `INVALID_LINE_TOKEN` (401), `LINE_EMAIL_REQUIRED` (400), `LINE_LOGIN_DISABLED` (404)
+- **Provider quirks**: email is optional in the LINE Login scope. If the user's channel/consent does not include email, the user is still auto-provisioned with a synthesized placeholder email `{subject}@line.local` and `EmailConfirmed=false` (same pattern as ThaID). If email *is* returned, it is stored as-is with `EmailConfirmed=true`.
+- **Errors**: `INVALID_LINE_TOKEN` (401), `LINE_LOGIN_DISABLED` (404)
 
 ```powershell
 $env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
@@ -366,7 +366,7 @@ Adds three more external login providers on top of Google, sharing the same toke
 
 - **Microsoft external login**: new `POST /auth/external/microsoft` accepting a Microsoft `id_token` (Azure AD or personal MSA). Config `AuthMicroservice:ExternalProviders:Microsoft:{Enabled, ClientId, TenantId}` — `TenantId` accepts `common` / `organizations` / `consumers` / a specific tenant GUID. Validation via OpenID Connect metadata (package: `Microsoft.IdentityModel.Protocols.OpenIdConnect`). Microsoft-issued email is treated as verified by default. Errors: `INVALID_MICROSOFT_TOKEN` (401), `MICROSOFT_LOGIN_DISABLED` (404).
 - **Facebook external login**: new `POST /auth/external/facebook` accepting a Facebook `access_token`. Config `AuthMicroservice:ExternalProviders:Facebook:{Enabled, AppId, AppSecret, GraphApiVersion}` (default `v18.0`). Validation via Graph `debug_token` then `GET /me?fields=id,email,name,picture` via `IHttpClientFactory`. Errors: `INVALID_FACEBOOK_TOKEN` (401), `FACEBOOK_EMAIL_REQUIRED` (400 — user did not grant the email scope), `FACEBOOK_LOGIN_DISABLED` (404).
-- **LINE external login**: new `POST /auth/external/line` accepting a LINE `id_token` (typically from LIFF `liff.getIDToken()`). Config `AuthMicroservice:ExternalProviders:Line:{Enabled, ChannelId, VerifyEndpoint}` (default endpoint `https://api.line.me/oauth2/v2.1/verify`). `ChannelId` is used as both the verify-endpoint client_id and the expected `aud`; `iss` must equal `https://access.line.me`. Errors: `INVALID_LINE_TOKEN` (401), `LINE_EMAIL_REQUIRED` (400 — user did not grant the email scope), `LINE_LOGIN_DISABLED` (404).
+- **LINE external login**: new `POST /auth/external/line` accepting a LINE `id_token` (typically from LIFF `liff.getIDToken()`). Config `AuthMicroservice:ExternalProviders:Line:{Enabled, ChannelId, VerifyEndpoint}` (default endpoint `https://api.line.me/oauth2/v2.1/verify`). `ChannelId` is used as both the verify-endpoint client_id and the expected `aud`; `iss` must equal `https://access.line.me`. Email is optional — when LINE does not return email, users are auto-provisioned with a placeholder `{subject}@line.local` and `EmailConfirmed=false`. Errors: `INVALID_LINE_TOKEN` (401), `LINE_LOGIN_DISABLED` (404).
 - **Browser test harnesses**: added [test-google.html](test-google.html), [test-microsoft.html](test-microsoft.html), [test-facebook.html](test-facebook.html), [test-line.html](test-line.html) at repo root — one per provider, uses the provider's native JS SDK / LIFF to obtain a real token and POST it to the corresponding `/auth/external/*` endpoint.
 
 ### v1.1.0 — 2026-09-16

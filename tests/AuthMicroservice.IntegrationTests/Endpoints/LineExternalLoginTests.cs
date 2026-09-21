@@ -66,20 +66,49 @@ public class LineExternalLoginTests : IClassFixture<AuthApiFactory>
     }
 
     [Fact]
-    public async Task MissingEmail_Returns400()
+    public async Task MissingEmail_AutoProvisionsUserWithPlaceholderEmail()
     {
         var client = _factory.CreateClient();
+        var subject = $"sub-{Guid.NewGuid():N}";
         var idToken = $"fake-token-{Guid.NewGuid():N}";
 
         _factory.LineTokenValidator.RegisterToken(idToken, new LineUserInfo(
-            Subject: $"sub-{Guid.NewGuid():N}",
+            Subject: subject,
             Email: null,
             Name: "No Email User",
             PictureUrl: null));
 
         var response = await client.PostAsJsonAsync("/auth/external/line", new LineExternalLoginRequest { IdToken = idToken });
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<AuthResponse>();
+        body!.AccessToken.Should().NotBeNullOrEmpty();
+        body.User.Email.Should().Be($"{subject}@line.local");
+        body.User.EmailConfirmed.Should().BeFalse();
+        body.User.FullName.Should().Be("No Email User");
+        body.User.Roles.Should().Contain("User");
+    }
+
+    [Fact]
+    public async Task MissingEmail_SecondCall_ReusesExistingUserBySubject()
+    {
+        var client = _factory.CreateClient();
+        var subject = $"sub-{Guid.NewGuid():N}";
+        var idToken = $"fake-token-{Guid.NewGuid():N}";
+
+        _factory.LineTokenValidator.RegisterToken(idToken, new LineUserInfo(
+            Subject: subject, Email: null, Name: "No Email User", PictureUrl: null));
+
+        var first = await client.PostAsJsonAsync("/auth/external/line", new LineExternalLoginRequest { IdToken = idToken });
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var firstBody = await first.Content.ReadFromJsonAsync<AuthResponse>();
+
+        var second = await client.PostAsJsonAsync("/auth/external/line", new LineExternalLoginRequest { IdToken = idToken });
+        second.StatusCode.Should().Be(HttpStatusCode.OK);
+        var secondBody = await second.Content.ReadFromJsonAsync<AuthResponse>();
+
+        secondBody!.User.Id.Should().Be(firstBody!.User.Id);
+        secondBody.User.Email.Should().Be($"{subject}@line.local");
     }
 
     [Fact]
