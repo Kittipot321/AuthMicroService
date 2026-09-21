@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <title>Sign in with LINE</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", "Noto Sans Thai", sans-serif; padding: 20px; max-width: 720px; margin: 0 auto; }
+    #loginBtn { padding: 10px 18px; font-size: 16px; background: #06C755; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+    #loginBtn:hover { background: #05a548; }
+    pre { background: #f5f5f5; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+
+    .consent-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000; padding: 16px;
+    }
+    .consent-card {
+      background: #fff; border-radius: 12px; max-width: 520px; width: 100%;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2); overflow: hidden;
+    }
+    .consent-header {
+      padding: 20px 24px; border-bottom: 1px solid #eee;
+    }
+    .consent-header h2 { margin: 0 0 4px; font-size: 18px; color: #222; }
+    .consent-header .sub { margin: 0; font-size: 13px; color: #888; }
+    .consent-body { padding: 20px 24px; font-size: 14px; color: #333; line-height: 1.6; }
+    .consent-body h3 { font-size: 14px; margin: 16px 0 6px; color: #444; }
+    .consent-body h3:first-child { margin-top: 0; }
+    .consent-body ul { margin: 6px 0; padding-left: 20px; }
+    .consent-body .data-row { display: flex; gap: 8px; align-items: baseline; margin: 4px 0; }
+    .consent-body .data-row .label { min-width: 60px; color: #666; font-size: 13px; }
+    .consent-body .data-row .value { font-weight: 500; color: #111; word-break: break-all; }
+    .consent-body .data-row .missing { color: #b26a00; font-style: italic; }
+    .consent-body a { color: #06C755; }
+    .consent-footer {
+      padding: 16px 24px; border-top: 1px solid #eee;
+      display: flex; gap: 12px; justify-content: flex-end;
+    }
+    .btn-cancel, .btn-accept {
+      padding: 9px 18px; font-size: 14px; border-radius: 6px; cursor: pointer; border: none;
+    }
+    .btn-cancel { background: #f0f0f0; color: #333; }
+    .btn-cancel:hover { background: #e0e0e0; }
+    .btn-accept { background: #06C755; color: #fff; }
+    .btn-accept:hover { background: #05a548; }
+  </style>
+</head>
+<body>
+  <button id="loginBtn">Sign in with LINE</button>
+  <pre id="out"></pre>
+
+  <div id="consentModal" class="consent-overlay" style="display:none;">
+    <div class="consent-card" role="dialog" aria-modal="true" aria-labelledby="consentTitle">
+      <div class="consent-header">
+        <h2 id="consentTitle">การยินยอมใช้ข้อมูลส่วนบุคคล</h2>
+        <p class="sub">Data Usage Consent</p>
+      </div>
+      <div class="consent-body">
+        <h3>LINE จะส่งข้อมูลของคุณให้ระบบ</h3>
+        <div class="data-row">
+          <span class="label">Email</span>
+          <span id="consentEmail" class="value"></span>
+        </div>
+        <div class="data-row">
+          <span class="label">Name</span>
+          <span id="consentName" class="value"></span>
+        </div>
+
+        <h3>ระบบจะเก็บและใช้ข้อมูลของคุณเพื่อ</h3>
+        <ul>
+          <li>ยืนยันตัวตน (authentication) และเชื่อมโยงบัญชีของคุณกับ LINE</li>
+          <li>ใช้ email สำหรับติดต่อและ recover บัญชี</li>
+          <li>ใช้ชื่อและ LINE User ID เพื่อระบุตัวตนภายในระบบ</li>
+        </ul>
+
+        <h3>การเก็บรักษาข้อมูล</h3>
+        <ul>
+          <li>ข้อมูลจะถูกเก็บตลอดอายุการใช้งานของบัญชี</li>
+          <li>คุณสามารถขอลบบัญชีและข้อมูลได้ตลอดเวลา</li>
+        </ul>
+
+        <p style="margin-top: 14px;">
+          กรุณาอ่าน <a href="#" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a> ก่อนกดยินยอม
+        </p>
+      </div>
+      <div class="consent-footer">
+        <button id="consentCancel" class="btn-cancel" type="button">ยกเลิก</button>
+        <button id="consentAccept" class="btn-accept" type="button">ยินยอมและเข้าสู่ระบบ</button>
+      </div>
+    </div>
+  </div>
+
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    const LIFF_ID = 'LIFF-ID';
+    const API_URL = 'http://localhost:5100/auth/external/line';
+
+    async function init() {
+      try {
+        await liff.init({ liffId: LIFF_ID });
+        if (liff.isLoggedIn()) {
+          const idToken = liff.getIDToken();
+          navigator.clipboard.writeText(idToken || '').catch(() => {});
+          document.getElementById('out').textContent = 'id_token:\n' + idToken;
+        }
+      } catch (e) {
+        document.getElementById('out').textContent = 'liff.init failed: ' + e.message;
+      }
+    }
+    init();
+
+    function showConsent(decoded) {
+      return new Promise((resolve) => {
+        const emailEl = document.getElementById('consentEmail');
+        const nameEl = document.getElementById('consentName');
+        const modal = document.getElementById('consentModal');
+        const acceptBtn = document.getElementById('consentAccept');
+        const cancelBtn = document.getElementById('consentCancel');
+
+        if (decoded && decoded.email) {
+          emailEl.textContent = decoded.email;
+          emailEl.classList.remove('missing');
+        } else {
+          emailEl.textContent = '(LINE ไม่ได้ส่ง email — ระบบจะสร้างบัญชีแบบไม่มี email)';
+          emailEl.classList.add('missing');
+        }
+        nameEl.textContent = (decoded && decoded.name) ? decoded.name : '(ไม่ระบุ)';
+
+        modal.style.display = 'flex';
+
+        const cleanup = () => {
+          modal.style.display = 'none';
+          acceptBtn.removeEventListener('click', onAccept);
+          cancelBtn.removeEventListener('click', onCancel);
+        };
+        const onAccept = () => { cleanup(); resolve(true); };
+        const onCancel = () => { cleanup(); resolve(false); };
+        acceptBtn.addEventListener('click', onAccept);
+        cancelBtn.addEventListener('click', onCancel);
+      });
+    }
+
+    async function postToApi(idToken) {
+      const out = document.getElementById('out');
+      try {
+        const res = await fetch(API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken })
+        });
+        const body = await res.json();
+        out.textContent = JSON.stringify(body, null, 2);
+      } catch (e) {
+        out.textContent = 'API call failed: ' + e.message;
+      }
+    }
+
+    document.getElementById('loginBtn').onclick = async () => {
+      const out = document.getElementById('out');
+
+      if (!liff.isLoggedIn()) {
+        liff.login({ redirectUri: window.location.href });
+        return;
+      }
+      const idToken = liff.getIDToken();
+      if (!idToken) {
+        out.textContent = 'No id_token from LIFF';
+        return;
+      }
+
+      let decoded = null;
+      try {
+        decoded = liff.getDecodedIDToken();
+      } catch (e) {
+        out.textContent = 'ไม่สามารถอ่านข้อมูลจาก LINE ID token: ' + e.message;
+        return;
+      }
+
+      const accepted = await showConsent(decoded);
+      if (!accepted) {
+        out.textContent = 'ยกเลิกแล้ว — ไม่ได้เข้าสู่ระบบ';
+        return;
+      }
+      await postToApi(idToken);
+    };
+  </script>
+</body>
+</html>

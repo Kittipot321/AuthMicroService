@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <button id="loginBtn">Sign in with Microsoft</button>
+  <pre id="out"></pre>
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.24.0/lib/msal-browser.min.js"
+          onerror="document.getElementById('out').textContent='Failed to load msal-browser.min.js (check network / CSP / file:// blocking)';"></script>
+  <script>
+    window.addEventListener("load", async () => {
+      if (typeof msal === "undefined") {
+        document.getElementById("out").textContent =
+          "msal is not defined — script did not load. Serve via http(s):// (e.g. `npx serve`) instead of opening the file directly.";
+        return;
+      }
+      const pca = new msal.PublicClientApplication({
+        auth: {
+          clientId: "Client-ID",
+          authority: "https://login.microsoftonline.com/common",
+          redirectUri: window.location.origin
+        }
+      });
+      await pca.initialize();
+      document.getElementById("loginBtn").onclick = async () => {
+        try {
+          const res = await pca.loginPopup({ scopes: ["openid", "email", "profile"] });
+          console.log("id_token:", res.idToken);
+          navigator.clipboard.writeText(res.idToken);
+          document.getElementById("out").textContent = res.idToken;
+        } catch (e) {
+          document.getElementById("out").textContent = "Login error: " + e.message;
+        }
+      };
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <button id="loginBtn">Sign in with Facebook</button>
+  <pre id="out"></pre>
+  <script>
+    window.fbAsyncInit = function() {
+      FB.init({
+        appId: 'Facebook-Id',
+        version: 'v21.0',
+        cookie: true,
+        xfbml: false
+      });
+    };
+  </script>
+  <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+  <script>
+    document.getElementById('loginBtn').onclick = () => {
+      FB.login((res) => {
+        if (res.authResponse && res.authResponse.accessToken) {
+          const token = res.authResponse.accessToken;
+          console.log('access_token:', token);
+          navigator.clipboard.writeText(token);
+          document.getElementById('out').textContent = token;
+        } else {
+          document.getElementById('out').textContent = 'Login cancelled or failed';
+        }
+      }, { scope: 'email,public_profile' });
+    };
+  </script>
+</body>
+</html>

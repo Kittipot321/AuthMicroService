@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <div id="g_id_onload"
+       data-client_id="Google_Client_Id"
+       data-callback="onLogin"></div>
+  <div class="g_id_signin" data-type="standard"></div>
+  <script src="https://accounts.google.com/gsi/client" async></script>
+  <script>
+    function onLogin(res) {
+      console.log("id_token:", res.credential);
+      navigator.clipboard.writeText(res.credential);
+    }
+  </script>
+</body>
+</html>
