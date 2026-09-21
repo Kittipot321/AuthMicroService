@@ -166,6 +166,29 @@ public static class AuthEndpoints
             }
         }
 
+        if (toggles.ExternalThaId.Enabled && options.ExternalProviders.ThaId.Enabled)
+        {
+            var challengeBuilder = group.MapGet("/external/thaid/challenge", ExternalThaIdChallengeAsync)
+                .WithName("AuthExternalThaIdChallenge")
+                .AllowAnonymous()
+                .Produces(StatusCodes.Status302Found)
+                .ProducesProblem(StatusCodes.Status400BadRequest)
+                .ProducesProblem(StatusCodes.Status404NotFound);
+
+            var callbackBuilder = group.MapGet("/external/thaid/callback", ExternalThaIdCallbackAsync)
+                .WithName("AuthExternalThaIdCallback")
+                .AllowAnonymous()
+                .Produces(StatusCodes.Status302Found)
+                .ProducesProblem(StatusCodes.Status400BadRequest)
+                .ProducesProblem(StatusCodes.Status401Unauthorized);
+
+            if (!toggles.ExternalThaId.ShowInSwagger || !swaggerEnabled)
+            {
+                challengeBuilder.ExcludeFromDescription();
+                callbackBuilder.ExcludeFromDescription();
+            }
+        }
+
         return endpoints;
     }
 
@@ -446,6 +469,57 @@ public static class AuthEndpoints
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
+    private static async Task<IResult> ExternalThaIdChallengeAsync(
+        [FromQuery] string? returnUrl,
+        IAuthService authService,
+        CancellationToken cancellationToken)
+    {
+        var result = await authService.StartThaIdChallengeAsync(returnUrl, cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return ToProblem(result);
+        }
+
+        return Results.Redirect(result.Value.AuthorizeUrl);
+    }
+
+    private static async Task<IResult> ExternalThaIdCallbackAsync(
+        [FromQuery] string code,
+        [FromQuery] string state,
+        [FromQuery(Name = "error")] string? error,
+        [FromQuery(Name = "error_description")] string? errorDescription,
+        IAuthService authService,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            return Results.Problem(
+                title: errorDescription ?? error,
+                statusCode: StatusCodes.Status401Unauthorized,
+                type: AuthErrorCodes.InvalidThaIdCode);
+        }
+
+        var result = await authService.LoginWithThaIdCallbackAsync(code, state, ResolveIp(http), cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return ToProblem(result);
+        }
+
+        var auth = result.Value.AuthResponse;
+        var returnUrl = result.Value.ReturnUrl;
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            return Results.Ok(auth);
+        }
+
+        var fragment =
+            $"#access_token={Uri.EscapeDataString(auth.AccessToken)}" +
+            $"&refresh_token={Uri.EscapeDataString(auth.RefreshToken)}" +
+            $"&expires_at={Uri.EscapeDataString(auth.ExpiresAt.ToString("O"))}";
+        return Results.Redirect(returnUrl + fragment);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -497,6 +571,10 @@ public static class AuthEndpoints
             AuthErrorCodes.InvalidLineToken => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.LineEmailRequired => StatusCodes.Status400BadRequest,
             AuthErrorCodes.LineLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.ThaIdLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidThaIdState => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.InvalidThaIdCode => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.ThaIdReturnUrlNotAllowed => StatusCodes.Status400BadRequest,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

@@ -51,4 +51,5 @@ public sealed class EndpointOptions
     public EndpointToggle ExternalMicrosoft { get; set; } = new();
     public EndpointToggle ExternalFacebook { get; set; } = new();
     public EndpointToggle ExternalLine { get; set; } = new();
+    public EndpointToggle ExternalThaId { get; set; } = new();
 }

@@ -9,6 +9,8 @@ public sealed class ExternalProvidersOptions
     public FacebookProviderOptions Facebook { get; set; } = new();
 
     public LineProviderOptions Line { get; set; } = new();
+
+    public ThaIdProviderOptions ThaId { get; set; } = new();
 }
 
 public sealed class GoogleProviderOptions
@@ -51,4 +53,26 @@ public sealed class LineProviderOptions
     public string ChannelId { get; set; } = string.Empty;
 
     public string VerifyEndpoint { get; set; } = "https://api.line.me/oauth2/v2.1/verify";
+}
+
+public sealed class ThaIdProviderOptions
+{
+    public bool Enabled { get; set; }
+
+    public string ClientId { get; set; } = string.Empty;
+
+    public string ClientSecret { get; set; } = string.Empty;
+
+    // Sandbox default; override to https://imauth.bora.dopa.go.th/api/v2/oauth2 for production.
+    public string Authority { get; set; } = "https://imauthtestc.bora.dopa.go.th/api/v2/oauth2";
+
+    // Absolute URL of this API's callback endpoint — must match the redirect_uri registered with ThaID.
+    public string RedirectUri { get; set; } = string.Empty;
+
+    // Whitelist of allowed prefixes for the frontend returnUrl (open-redirect guard).
+    public List<string> AllowedReturnUrlPrefixes { get; set; } = new();
+
+    public string Scopes { get; set; } = "openid pid given_name family_name email birthdate address";
+
+    public int StateLifetimeMinutes { get; set; } = 10;
 }

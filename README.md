@@ -73,9 +73,12 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/change-password` | auth | Requires current password |
 | GET | `/auth/me` | auth | User profile with roles + claims |
 | GET | `/auth/health` | anon | Liveness |
-| POST | `/auth/external/google` | anon | Google id_token → JWT (auto-provision + auto-link). 404 unless `ExternalProviders:Google:Enabled=true` |
+| POST | `/auth/external/google` | anon | Google `id_token` → JWT (auto-provision + auto-link). 404 unless `ExternalProviders:Google:Enabled=true` |
+| POST | `/auth/external/microsoft` | anon | Microsoft `id_token` (Azure AD / MSA) → JWT. 404 unless `ExternalProviders:Microsoft:Enabled=true` |
+| POST | `/auth/external/facebook` | anon | Facebook `access_token` → JWT. 404 unless `ExternalProviders:Facebook:Enabled=true` |
+| POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `INVALID_GOOGLE_TOKEN`, `GOOGLE_EMAIL_NOT_VERIFIED`, `EMAIL_EXISTS_UNVERIFIED`.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN` / `LINE_EMAIL_REQUIRED`, plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -172,10 +175,10 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "PasswordResetBaseUrl": "https://app.example.com/reset-password"
     },
     "ExternalProviders": {
-      "Google": {
-        "Enabled": false,
-        "ClientId": ""
-      }
+      "Google":    { "Enabled": false, "ClientId": "" },
+      "Microsoft": { "Enabled": false, "ClientId": "", "TenantId": "common" },
+      "Facebook":  { "Enabled": false, "AppId": "", "AppSecret": "", "GraphApiVersion": "v18.0" },
+      "Line":      { "Enabled": false, "ChannelId": "", "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify" }
     },
     "RoutePrefix": "/auth",
     "EnableSwagger": true
@@ -189,30 +192,82 @@ Secrets are typically supplied via env vars using double-underscore syntax:
 - `AuthMicroservice__Database__ConnectionString`
 - `AuthMicroservice__Email__Smtp__Password`
 
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or `ExternalProviders.Google.Enabled=true` without a `ClientId`.
+Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`.
 
-## Google OAuth (external login)
+## External login providers
 
-`POST /auth/external/google` accepts a Google `id_token` obtained by the client (SPA / mobile) via Google Sign-In and returns the service's own JWT + refresh token. Token exchange only — no cookie/redirect handshake — so the endpoint fits SPA and mobile architectures naturally.
+Four providers are supported: **Google**, **Microsoft**, **Facebook**, and **LINE**. Each endpoint accepts a token obtained by the client (SPA / mobile) via the provider's native SDK and returns this service's own JWT + refresh token. Token exchange only — no cookie/redirect handshake — so all four fit SPA and mobile architectures naturally.
 
-Enable it in `appsettings.json` or via env vars:
+### Shared behaviour (all providers)
+
+1. Validates the incoming token with the provider (signature/audience/expiry, or provider debug endpoint for opaque tokens).
+2. If a link already exists in `AspNetUserLogins` for `(Provider, subject)` → issues tokens.
+3. Else if a local user with the same email exists:
+   - `EmailConfirmed=true` → auto-links the external identity and issues tokens.
+   - `EmailConfirmed=false` → returns `EMAIL_EXISTS_UNVERIFIED` (409). Verify the local account first (via `/auth/verify-email`) before retrying, to prevent account takeover through unverified addresses.
+4. Else → auto-provisions a new `ApplicationUser` with `EmailConfirmed=true`, assigns the `User` role, links the external identity, and issues tokens.
+
+Every provider is **disabled by default** in [appsettings.json](src/AuthMicroservice.Api/appsettings.json) — a disabled endpoint responds 404 (`{PROVIDER}_LOGIN_DISABLED`). Startup fail-fast if `Enabled=true` without required credentials.
+
+Ready-to-run browser test harnesses (grab a real token from the provider and POST it to the endpoint) sit in the repo root: [test-google.html](test-google.html), [test-microsoft.html](test-microsoft.html), [test-facebook.html](test-facebook.html), [test-line.html](test-line.html).
+
+### Google
+
+- **Endpoint**: `POST /auth/external/google` — body `{ "idToken": "..." }`
+- **Config**: `AuthMicroservice:ExternalProviders:Google:{ Enabled, ClientId }`
+- **Validation**: Google JWKS — signature, `aud` = `ClientId`, `exp`
+- **Provider quirks**: rejects with `GOOGLE_EMAIL_NOT_VERIFIED` (400) if Google's `email_verified` claim is false
+- **Errors**: `INVALID_GOOGLE_TOKEN` (401), `GOOGLE_EMAIL_NOT_VERIFIED` (400), `GOOGLE_LOGIN_DISABLED` (404)
 
 ```powershell
 $env:AuthMicroservice__ExternalProviders__Google__Enabled = "true"
 $env:AuthMicroservice__ExternalProviders__Google__ClientId = "<your>.apps.googleusercontent.com"
 ```
 
-Server-side behaviour:
+### Microsoft
 
-1. Validates `id_token` signature, audience (= `ClientId`), and expiry via Google JWKS.
-2. Rejects with `GOOGLE_EMAIL_NOT_VERIFIED` (400) if Google did not verify the email.
-3. If a link already exists in `AspNetUserLogins` for `(Google, subject)` → issues tokens.
-4. Else if a local user with the same email exists:
-   - `EmailConfirmed=true` → auto-links the Google identity and issues tokens.
-   - `EmailConfirmed=false` → returns `EMAIL_EXISTS_UNVERIFIED` (409). Verify the local account first (via `/auth/verify-email`) before retrying, to prevent account takeover through unverified addresses.
-5. Else → auto-provisions a new `ApplicationUser` with `EmailConfirmed=true`, assigns the `User` role, links the Google identity, and issues tokens.
+- **Endpoint**: `POST /auth/external/microsoft` — body `{ "idToken": "..." }`
+- **Config**: `AuthMicroservice:ExternalProviders:Microsoft:{ Enabled, ClientId, TenantId }` — `TenantId` accepts `common` / `organizations` / `consumers` / a specific tenant GUID (default `common`)
+- **Validation**: OpenID Connect metadata (`Microsoft.IdentityModel.Protocols.OpenIdConnect`) — signature, `aud` = `ClientId`, `iss` matches the resolved tenant, `exp`
+- **Provider quirks**: Microsoft-issued email is treated as verified by default; no separate email-verification step
+- **Errors**: `INVALID_MICROSOFT_TOKEN` (401), `MICROSOFT_LOGIN_DISABLED` (404)
 
-Sample request:
+```powershell
+$env:AuthMicroservice__ExternalProviders__Microsoft__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__Microsoft__ClientId = "<app-registration-guid>"
+$env:AuthMicroservice__ExternalProviders__Microsoft__TenantId = "common"
+```
+
+### Facebook
+
+- **Endpoint**: `POST /auth/external/facebook` — body `{ "accessToken": "..." }`
+- **Config**: `AuthMicroservice:ExternalProviders:Facebook:{ Enabled, AppId, AppSecret, GraphApiVersion }` (default `GraphApiVersion` = `v18.0`)
+- **Validation**: Graph `debug_token` (asserts token was issued to `AppId` and not expired) → then `GET /{version}/me?fields=id,email,name,picture` via `IHttpClientFactory`
+- **Provider quirks**: email is an optional scope — if the user did not grant it (or their Facebook account has no email), returns `FACEBOOK_EMAIL_REQUIRED` (400). Facebook does not report a verified-email flag; auto-provisioned users are marked `EmailConfirmed=true` on the trust that Facebook already verified it
+- **Errors**: `INVALID_FACEBOOK_TOKEN` (401), `FACEBOOK_EMAIL_REQUIRED` (400), `FACEBOOK_LOGIN_DISABLED` (404)
+
+```powershell
+$env:AuthMicroservice__ExternalProviders__Facebook__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__Facebook__AppId = "<app-id>"
+$env:AuthMicroservice__ExternalProviders__Facebook__AppSecret = "<app-secret>"
+```
+
+### LINE
+
+- **Endpoint**: `POST /auth/external/line` — body `{ "idToken": "..." }` (obtained from LIFF via `liff.getIDToken()`)
+- **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, VerifyEndpoint }` (default endpoint `https://api.line.me/oauth2/v2.1/verify`)
+- **Validation**: POST `id_token` + `ChannelId` to LINE verify endpoint — validates `aud` = `ChannelId`, `iss` = `https://access.line.me`, `exp`
+- **Provider quirks**: email is optional in the LINE Login scope — if the user's channel/consent does not include email, returns `LINE_EMAIL_REQUIRED` (400)
+- **Errors**: `INVALID_LINE_TOKEN` (401), `LINE_EMAIL_REQUIRED` (400), `LINE_LOGIN_DISABLED` (404)
+
+```powershell
+$env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
+```
+
+### Sample request
+
+Same shape for every provider — only the path and the token field name differ (`idToken` for Google/Microsoft/LINE, `accessToken` for Facebook):
 
 ```http
 POST /auth/external/google
@@ -220,8 +275,6 @@ Content-Type: application/json
 
 { "idToken": "eyJhbGciOi..." }
 ```
-
-The endpoint is only registered when `ExternalProviders:Google:Enabled=true`; otherwise it responds 404. The provider is disabled by default in [appsettings.json](src/AuthMicroservice.Api/appsettings.json).
 
 ## EF Core migrations (per provider)
 
@@ -307,6 +360,15 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 
 ## Changelog
 
+### v1.1.1 — 2026-09-21
+
+Adds three more external login providers on top of Google, sharing the same token-exchange flow (auto-link when local email is verified, reject `EMAIL_EXISTS_UNVERIFIED` otherwise, auto-provision new users with `EmailConfirmed=true` + `User` role) and the same fail-fast startup checks.
+
+- **Microsoft external login**: new `POST /auth/external/microsoft` accepting a Microsoft `id_token` (Azure AD or personal MSA). Config `AuthMicroservice:ExternalProviders:Microsoft:{Enabled, ClientId, TenantId}` — `TenantId` accepts `common` / `organizations` / `consumers` / a specific tenant GUID. Validation via OpenID Connect metadata (package: `Microsoft.IdentityModel.Protocols.OpenIdConnect`). Microsoft-issued email is treated as verified by default. Errors: `INVALID_MICROSOFT_TOKEN` (401), `MICROSOFT_LOGIN_DISABLED` (404).
+- **Facebook external login**: new `POST /auth/external/facebook` accepting a Facebook `access_token`. Config `AuthMicroservice:ExternalProviders:Facebook:{Enabled, AppId, AppSecret, GraphApiVersion}` (default `v18.0`). Validation via Graph `debug_token` then `GET /me?fields=id,email,name,picture` via `IHttpClientFactory`. Errors: `INVALID_FACEBOOK_TOKEN` (401), `FACEBOOK_EMAIL_REQUIRED` (400 — user did not grant the email scope), `FACEBOOK_LOGIN_DISABLED` (404).
+- **LINE external login**: new `POST /auth/external/line` accepting a LINE `id_token` (typically from LIFF `liff.getIDToken()`). Config `AuthMicroservice:ExternalProviders:Line:{Enabled, ChannelId, VerifyEndpoint}` (default endpoint `https://api.line.me/oauth2/v2.1/verify`). `ChannelId` is used as both the verify-endpoint client_id and the expected `aud`; `iss` must equal `https://access.line.me`. Errors: `INVALID_LINE_TOKEN` (401), `LINE_EMAIL_REQUIRED` (400 — user did not grant the email scope), `LINE_LOGIN_DISABLED` (404).
+- **Browser test harnesses**: added [test-google.html](test-google.html), [test-microsoft.html](test-microsoft.html), [test-facebook.html](test-facebook.html), [test-line.html](test-line.html) at repo root — one per provider, uses the provider's native JS SDK / LIFF to obtain a real token and POST it to the corresponding `/auth/external/*` endpoint.
+
 ### v1.1.0 — 2026-09-16
 
 - **Google OAuth external login**: new `POST /auth/external/google` endpoint accepting a Google `id_token` and returning the service's JWT + refresh token. Token-exchange flow only (no cookie/redirect). Auto-provisions new users with `EmailConfirmed=true`, auto-links Google identities to existing verified local accounts, and rejects link attempts against unverified local accounts (`EMAIL_EXISTS_UNVERIFIED`) to prevent takeover. Package: `Google.Apis.Auth`. Config: `AuthMicroservice:ExternalProviders:Google:{Enabled, ClientId}` — disabled by default; endpoint returns 404 unless enabled. Startup fail-fast if `Enabled=true` without `ClientId`. Full unit + integration test coverage via `IGoogleTokenValidator` seam.
@@ -330,7 +392,7 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 - Standalone API + library-mode consumer + Docker Compose + Sample + Unit/Integration tests
 
 ## Future: Next Plan
-- v1.1 candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ v1.1.0 / Microsoft / Apple), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
+- v1.1 candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
 - Ops: HealthChecks (DB + SMTP), OpenTelemetry traces, structured logging correlationId
 
 ```

@@ -1,4 +1,7 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using AuthMicroservice.Core.Configuration;
 using AuthMicroservice.Core.Contracts.Common;
 using AuthMicroservice.Core.Contracts.Requests;
 using AuthMicroservice.Core.Contracts.Responses;
@@ -6,6 +9,7 @@ using AuthMicroservice.Core.Domain;
 using AuthMicroservice.Core.Services.Abstractions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace AuthMicroservice.Core.Services;
 
@@ -15,6 +19,7 @@ internal sealed class AuthService : IAuthService
     internal const string MicrosoftLoginProvider = "Microsoft";
     internal const string FacebookLoginProvider = "Facebook";
     internal const string LineLoginProvider = "Line";
+    internal const string ThaIdLoginProvider = "ThaId";
 
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
@@ -25,6 +30,9 @@ internal sealed class AuthService : IAuthService
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IFacebookTokenValidator _facebookTokenValidator;
     private readonly ILineTokenValidator _lineTokenValidator;
+    private readonly IThaIdOidcClient _thaIdOidcClient;
+    private readonly IThaIdStateStore _thaIdStateStore;
+    private readonly IOptionsMonitor<AuthMicroserviceOptions> _authOptions;
     private readonly IClock _clock;
     private readonly ILogger<AuthService> _logger;
 
@@ -38,6 +46,9 @@ internal sealed class AuthService : IAuthService
         IMicrosoftTokenValidator microsoftTokenValidator,
         IFacebookTokenValidator facebookTokenValidator,
         ILineTokenValidator lineTokenValidator,
+        IThaIdOidcClient thaIdOidcClient,
+        IThaIdStateStore thaIdStateStore,
+        IOptionsMonitor<AuthMicroserviceOptions> authOptions,
         IClock clock,
         ILogger<AuthService> logger)
     {
@@ -50,6 +61,9 @@ internal sealed class AuthService : IAuthService
         _microsoftTokenValidator = microsoftTokenValidator;
         _facebookTokenValidator = facebookTokenValidator;
         _lineTokenValidator = lineTokenValidator;
+        _thaIdOidcClient = thaIdOidcClient;
+        _thaIdStateStore = thaIdStateStore;
+        _authOptions = authOptions;
         _clock = clock;
         _logger = logger;
     }
@@ -609,6 +623,167 @@ internal sealed class AuthService : IAuthService
         var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
         return AuthResult<AuthResponse>.Success(response);
     }
+
+    public Task<AuthResult<ThaIdChallengeResponse>> StartThaIdChallengeAsync(string? returnUrl, CancellationToken cancellationToken = default)
+    {
+        var thaId = _authOptions.CurrentValue.ExternalProviders.ThaId;
+        if (!thaId.Enabled)
+        {
+            return Task.FromResult(AuthResult<ThaIdChallengeResponse>.Failure(
+                AuthErrorCodes.ThaIdLoginDisabled, "ThaID external login is not enabled."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(returnUrl) && !IsReturnUrlAllowed(returnUrl, thaId))
+        {
+            return Task.FromResult(AuthResult<ThaIdChallengeResponse>.Failure(
+                AuthErrorCodes.ThaIdReturnUrlNotAllowed, "returnUrl is not on the allowed list."));
+        }
+
+        var state = GenerateOpaqueToken();
+        var codeVerifier = GenerateCodeVerifier();
+        var codeChallenge = ComputeCodeChallenge(codeVerifier);
+
+        _thaIdStateStore.Save(
+            state,
+            new ThaIdAuthState(codeVerifier, returnUrl, _clock.UtcNow),
+            TimeSpan.FromMinutes(Math.Max(1, thaId.StateLifetimeMinutes)));
+
+        string authorizeUrl;
+        try
+        {
+            authorizeUrl = _thaIdOidcClient.BuildAuthorizeUrl(state, codeChallenge);
+        }
+        catch (ThaIdOidcException ex)
+        {
+            _logger.LogWarning(ex, "Failed to build ThaID authorize URL.");
+            return Task.FromResult(AuthResult<ThaIdChallengeResponse>.Failure(
+                AuthErrorCodes.ThaIdLoginDisabled, ex.Message));
+        }
+
+        return Task.FromResult(AuthResult<ThaIdChallengeResponse>.Success(
+            new ThaIdChallengeResponse(authorizeUrl, state)));
+    }
+
+    public async Task<AuthResult<ThaIdCallbackResponse>> LoginWithThaIdCallbackAsync(string code, string state, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
+        {
+            return AuthResult<ThaIdCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidThaIdState, "Missing code or state.");
+        }
+
+        var authState = _thaIdStateStore.Consume(state);
+        if (authState is null)
+        {
+            return AuthResult<ThaIdCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidThaIdState, "ThaID state is unknown or expired.");
+        }
+
+        ThaIdUserInfo thaIdUser;
+        try
+        {
+            thaIdUser = await _thaIdOidcClient.ExchangeAndFetchUserAsync(code, authState.CodeVerifier, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ThaIdOidcException ex)
+        {
+            _logger.LogWarning(ex, "ThaID code exchange failed.");
+            return AuthResult<ThaIdCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidThaIdCode, "ThaID authorization code is invalid or expired.");
+        }
+
+        var user = await _userManager.FindByLoginAsync(ThaIdLoginProvider, thaIdUser.Pid).ConfigureAwait(false);
+
+        if (user is null)
+        {
+            var hasEmail = !string.IsNullOrWhiteSpace(thaIdUser.Email);
+            // ThaID does not always return email. Synthesize a placeholder so the row satisfies
+            // Identity's RequireUniqueEmail validator; EmailConfirmed=false flags it as unverified.
+            var email = hasEmail ? thaIdUser.Email : $"{thaIdUser.Pid}@thaid.local";
+            user = new ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = $"thaid.{thaIdUser.Pid}",
+                Email = email,
+                FullName = BuildFullName(thaIdUser.GivenName, thaIdUser.FamilyName),
+                EmailConfirmed = hasEmail,
+                CreatedAt = _clock.UtcNow
+            };
+
+            var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
+            if (!createResult.Succeeded)
+            {
+                return IdentityFailure<ThaIdCallbackResponse>(createResult);
+            }
+
+            await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+
+            var linkResult = await _userManager.AddLoginAsync(
+                user,
+                new UserLoginInfo(ThaIdLoginProvider, thaIdUser.Pid, ThaIdLoginProvider)).ConfigureAwait(false);
+            if (!linkResult.Succeeded)
+            {
+                return IdentityFailure<ThaIdCallbackResponse>(linkResult);
+            }
+        }
+
+        if (user.IsDeactivated)
+        {
+            return AuthResult<ThaIdCallbackResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<ThaIdCallbackResponse>.Success(new ThaIdCallbackResponse(response, authState.ReturnUrl));
+    }
+
+    private static bool IsReturnUrlAllowed(string returnUrl, ThaIdProviderOptions thaId)
+    {
+        foreach (var prefix in thaId.AllowedReturnUrlPrefixes)
+        {
+            if (!string.IsNullOrWhiteSpace(prefix) &&
+                returnUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string BuildFullName(string? given, string? family)
+    {
+        var combined = string.Join(" ", new[] { given, family }
+            .Where(s => !string.IsNullOrWhiteSpace(s)));
+        return string.IsNullOrWhiteSpace(combined) ? string.Empty : combined;
+    }
+
+    private static string GenerateOpaqueToken()
+    {
+        Span<byte> buffer = stackalloc byte[32];
+        RandomNumberGenerator.Fill(buffer);
+        return Base64UrlEncode(buffer);
+    }
+
+    private static string GenerateCodeVerifier()
+    {
+        // RFC 7636: 43-128 chars; 64 base64url chars = 48 random bytes.
+        Span<byte> buffer = stackalloc byte[48];
+        RandomNumberGenerator.Fill(buffer);
+        return Base64UrlEncode(buffer);
+    }
+
+    private static string ComputeCodeChallenge(string codeVerifier)
+    {
+        var hash = SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier));
+        return Base64UrlEncode(hash);
+    }
+
+    private static string Base64UrlEncode(ReadOnlySpan<byte> bytes)
+        => Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
 
     public async Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default)
     {

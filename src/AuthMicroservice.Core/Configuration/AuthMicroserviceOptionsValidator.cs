@@ -79,6 +79,34 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             errors.Add("AuthMicroservice:ExternalProviders:Line:ChannelId is required when Line.Enabled=true.");
         }
 
+        if (options.ExternalProviders.ThaId.Enabled)
+        {
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.ThaId.ClientId))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:ThaId:ClientId is required when ThaId.Enabled=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.ThaId.ClientSecret))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:ThaId:ClientSecret is required when ThaId.Enabled=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.ThaId.Authority))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:ThaId:Authority is required when ThaId.Enabled=true.");
+            }
+
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.ThaId.RedirectUri))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:ThaId:RedirectUri is required when ThaId.Enabled=true.");
+            }
+
+            if (options.ExternalProviders.ThaId.AllowedReturnUrlPrefixes.Count == 0)
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:ThaId:AllowedReturnUrlPrefixes must contain at least one entry when ThaId.Enabled=true.");
+            }
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");
