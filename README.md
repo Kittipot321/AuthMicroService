@@ -33,11 +33,13 @@ AuthMicroservice.sln
 
 ## Consume from your own project (library mode)
 
-Install via NuGet (published as `Kittipot.AuthMicroservice.*` to avoid name collisions on nuget.org — the runtime assembly + `using AuthMicroservice.Core.*` namespaces are unchanged):
+> **ต้องการ step-by-step guide เต็มรูปแบบ?** ดู [docs/INSTALLATION.md](docs/INSTALLATION.md) — ครอบคลุมทั้ง library mode และ standalone (Docker Compose) พร้อม troubleshooting
+
+Install via NuGet (published as `Synergy.AuthMicroservice.*` to avoid name collisions on nuget.org — the runtime assembly + `using AuthMicroservice.Core.*` namespaces are unchanged):
 
 ```powershell
-dotnet add package Kittipot.AuthMicroservice.Core
-dotnet add package Kittipot.AuthMicroservice.Migrations.SqlServer   # or .Postgres / .Sqlite / .InMemory
+dotnet add package Synergy.AuthMicroservice.Core
+dotnet add package Synergy.AuthMicroservice.Migrations.SqlServer   # or .Postgres / .Sqlite / .InMemory
 ```
 
 Or add a project reference to `AuthMicroservice.Core` (and the migration assemblies for the providers you want to support) if you have this repo checked out locally. Then in `Program.cs`:
@@ -77,8 +79,10 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/external/microsoft` | anon | Microsoft `id_token` (Azure AD / MSA) → JWT. 404 unless `ExternalProviders:Microsoft:Enabled=true` |
 | POST | `/auth/external/facebook` | anon | Facebook `access_token` → JWT. 404 unless `ExternalProviders:Facebook:Enabled=true` |
 | POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
+| GET | `/auth/external/thaid/challenge` | anon | `?returnUrl=...` → redirect ไปหน้า login ของ ThaID (สร้าง state + PKCE, เก็บใน state store). 404 unless `ExternalProviders:ThaId:Enabled=true` |
+| GET | `/auth/external/thaid/callback` | anon | `?code=&state=` จาก ThaID → verify state, แลก tokens ที่ Authority, ออก JWT + refresh, redirect กลับ `returnUrl` ที่ระบุใน challenge |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -178,7 +182,16 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "Google":    { "Enabled": false, "ClientId": "" },
       "Microsoft": { "Enabled": false, "ClientId": "", "TenantId": "common" },
       "Facebook":  { "Enabled": false, "AppId": "", "AppSecret": "", "GraphApiVersion": "v18.0" },
-      "Line":      { "Enabled": false, "ChannelId": "", "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify" }
+      "Line":      { "Enabled": false, "ChannelId": "", "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify" },
+      "ThaId":     {
+        "Enabled": false,
+        "ClientId": "", "ClientSecret": "",
+        "Authority": "https://imauthtestc.bora.dopa.go.th/api/v2/oauth2",   // sandbox default; prod = https://imauth.bora.dopa.go.th/api/v2/oauth2
+        "RedirectUri": "https://localhost:5100/auth/external/thaid/callback",
+        "AllowedReturnUrlPrefixes": [ "http://localhost:5173", "https://localhost:5100" ],
+        "Scopes": "openid pid given_name family_name email birthdate address",
+        "StateLifetimeMinutes": 10
+      }
     },
     "RoutePrefix": "/auth",
     "EnableSwagger": true
@@ -192,11 +205,13 @@ Secrets are typically supplied via env vars using double-underscore syntax:
 - `AuthMicroservice__Database__ConnectionString`
 - `AuthMicroservice__Email__Smtp__Password`
 
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`.
+Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`, ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`.
 
 ## External login providers
 
-Four providers are supported: **Google**, **Microsoft**, **Facebook**, and **LINE**. Each endpoint accepts a token obtained by the client (SPA / mobile) via the provider's native SDK and returns this service's own JWT + refresh token. Token exchange only — no cookie/redirect handshake — so all four fit SPA and mobile architectures naturally.
+Five providers are supported: **Google**, **Microsoft**, **Facebook**, **LINE**, and **ThaID** (Thai national digital ID). The first four use a **token-exchange** flow — client (SPA / mobile) obtains a provider token via the native SDK, POSTs it to this service, and gets back this service's own JWT + refresh token (no cookie/redirect handshake). **ThaID is the exception**: it uses the classic **OIDC redirect flow** (server-hosted `/challenge` + `/callback`) because ThaID mandates it — so ThaID needs a server-side callback URL registered with DOPA.
+
+> **จะเอาคีย์แต่ละ provider มาจากไหน?** ดู [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) — step-by-step guide ตั้งแต่สมัคร Developer Console ของ Google / Microsoft / Facebook / LINE / DOPA จนได้ credentials มาวางใน `appsettings.json`
 
 ### Shared behaviour (all providers)
 
@@ -209,7 +224,7 @@ Four providers are supported: **Google**, **Microsoft**, **Facebook**, and **LIN
 
 Every provider is **disabled by default** in [appsettings.json](src/AuthMicroservice.Api/appsettings.json) — a disabled endpoint responds 404 (`{PROVIDER}_LOGIN_DISABLED`). Startup fail-fast if `Enabled=true` without required credentials.
 
-Ready-to-run browser test harnesses (grab a real token from the provider and POST it to the endpoint) sit in the repo root: [test-google.html](test-google.html), [test-microsoft.html](test-microsoft.html), [test-facebook.html](test-facebook.html), [test-line.html](test-line.html).
+Ready-to-run browser test harnesses (grab a real token from the provider and POST it — or, for ThaID, kick off the redirect flow) sit under `test-html/`: [test-html/test-google.html](test-html/test-google.html), [test-html/test-microsoft.html](test-html/test-microsoft.html), [test-html/test-facebook.html](test-html/test-facebook.html), [test-html/test-line.html](test-html/test-line.html), [test-html/test-thaid.html](test-html/test-thaid.html).
 
 ### Google
 
@@ -265,9 +280,31 @@ $env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
 $env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
 ```
 
+### ThaID (Thai national digital ID / DOPA)
+
+- **Endpoints (redirect flow, no token-exchange)**:
+  - `GET /auth/external/thaid/challenge?returnUrl=<frontend-url>` — generates state + PKCE code_verifier, stores them via `IThaIdStateStore` (in-memory by default), then 302-redirects the browser to ThaID's `authorize` endpoint
+  - `GET /auth/external/thaid/callback?code=&state=` — invoked by ThaID after the user logs in; verifies state + PKCE, exchanges `code` for tokens at `Authority`, issues this service's JWT + refresh, then 302-redirects back to the original `returnUrl` with the tokens appended
+- **Config**: `AuthMicroservice:ExternalProviders:ThaId:{ Enabled, ClientId, ClientSecret, Authority, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes }`
+  - `Authority` default (sandbox) `https://imauthtestc.bora.dopa.go.th/api/v2/oauth2` — for production use `https://imauth.bora.dopa.go.th/api/v2/oauth2`
+  - `RedirectUri` **ต้องตรงกับ** URL ที่ลงทะเบียนไว้กับ DOPA (เช่น `https://localhost:5100/auth/external/thaid/callback` ตอน dev)
+  - `AllowedReturnUrlPrefixes` = whitelist ของ frontend URL prefix ที่ยอมให้ redirect กลับ (open-redirect guard)
+  - `Scopes` default `openid pid given_name family_name email birthdate address`
+  - `StateLifetimeMinutes` default `10`
+- **Validation**: OIDC metadata จาก `Authority`, PKCE (S256), state verification ผ่าน `IThaIdStateStore`
+- **Provider quirks**: email เป็น optional scope — ถ้า ThaID ไม่ส่ง email กลับมา, user ถูก auto-provision ด้วย placeholder `{pid}@thaid.local` + `EmailConfirmed=false` (pattern เดียวกับ LINE). ถ้ามี email ก็ใช้ตามที่ได้ + `EmailConfirmed=true`
+- **Errors**: `INVALID_THAID_STATE` (400 — state ไม่ตรง/หมดอายุ), `INVALID_THAID_CODE` (401 — แลก token ไม่ผ่าน), `THAID_RETURN_URL_NOT_ALLOWED` (400 — `returnUrl` ไม่อยู่ใน `AllowedReturnUrlPrefixes`), `THAID_LOGIN_DISABLED` (404)
+
+```powershell
+$env:AuthMicroservice__ExternalProviders__ThaId__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__ThaId__ClientId = "<dopa-client-id>"
+$env:AuthMicroservice__ExternalProviders__ThaId__ClientSecret = "<dopa-client-secret>"
+$env:AuthMicroservice__ExternalProviders__ThaId__RedirectUri = "https://localhost:5100/auth/external/thaid/callback"
+```
+
 ### Sample request
 
-Same shape for every provider — only the path and the token field name differ (`idToken` for Google/Microsoft/LINE, `accessToken` for Facebook):
+Same shape for the four token-exchange providers — only the path and the token field name differ (`idToken` for Google/Microsoft/LINE, `accessToken` for Facebook):
 
 ```http
 POST /auth/external/google
@@ -275,6 +312,20 @@ Content-Type: application/json
 
 { "idToken": "eyJhbGciOi..." }
 ```
+
+**ThaID is different**: the browser starts by navigating to `GET /auth/external/thaid/challenge?returnUrl=https://myapp/login-callback` (no body); the service handles the rest of the OIDC dance and eventually redirects the browser back to `returnUrl` with the issued tokens.
+
+### Running the browser test harnesses over HTTPS
+
+Provider SDKs (LIFF, Google Identity, MSAL, Facebook Login) require the page to be served over HTTPS — `file://` and plain `http://` won't work. Serve the repo root with [`dotnet-serve`](https://github.com/natemcmaster/dotnet-serve) — dev cert is generated automatically:
+
+```powershell
+dotnet tool install -g dotnet-serve                    # one-time install
+dotnet dev-certs https --trust                          # one-time trust
+dotnet serve -d c:\Code\AuthMicroServices -p 5001 -S    # -S = HTTPS
+```
+
+เปิด `https://localhost:5001/test-html/test-line.html` (หรือ `test-google.html` / `test-microsoft.html` / `test-facebook.html` / `test-thaid.html`) เพื่อทดสอบแต่ละ provider.
 
 ## EF Core migrations (per provider)
 
@@ -360,6 +411,13 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 
 ## Changelog
 
+### v1.2.0 — 2026-09-22
+
+- **ThaID external login (Thai national digital ID / DOPA)**: new redirect-based OIDC flow — `GET /auth/external/thaid/challenge?returnUrl=...` เริ่ม flow (สร้าง state + PKCE, redirect ไป ThaID authorize) และ `GET /auth/external/thaid/callback?code=&state=` แลก tokens + ออก JWT/refresh + redirect กลับ `returnUrl`. Config `AuthMicroservice:ExternalProviders:ThaId:{Enabled, ClientId, ClientSecret, Authority, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes}` — sandbox authority `https://imauthtestc.bora.dopa.go.th/api/v2/oauth2`, prod `https://imauth.bora.dopa.go.th/api/v2/oauth2`. State + PKCE verified via `IThaIdStateStore` (in-memory default). Email เป็น optional scope — user ที่ไม่มี email ถูก auto-provision เป็น `{pid}@thaid.local` + `EmailConfirmed=false`. `AllowedReturnUrlPrefixes` เป็น open-redirect guard. Errors: `INVALID_THAID_STATE` (400), `INVALID_THAID_CODE` (401), `THAID_RETURN_URL_NOT_ALLOWED` (400), `THAID_LOGIN_DISABLED` (404).
+- **NuGet package rebrand**: package IDs เปลี่ยน `Kittipot.AuthMicroservice.*` → `Synergy.AuthMicroservice.*` (Core + Migrations.SqlServer/Postgres/Sqlite/InMemory) เพื่อสะท้อน ownership ของ Synergy Software — assembly names และ `using AuthMicroservice.Core.*` namespaces คงเดิม (source-compatible, แต่ผู้ใช้ที่ install จาก NuGet ต้อง `dotnet remove package Kittipot.AuthMicroservice.*` แล้ว `dotnet add package Synergy.AuthMicroservice.*`).
+- **Test harnesses reorganized + populated**: ย้าย `test-*.html` จาก repo root → [`test-html/`](test-html/) folder และเติมค่า client identifier ตัวอย่างจริงในแต่ละไฟล์ (Facebook AppId, Google Client ID, Microsoft Client ID, LINE LIFF ID) ให้กดปุ่มแล้วทดสอบได้ทันที + เพิ่ม [test-html/test-thaid.html](test-html/test-thaid.html).
+- **Local HTTPS testing docs**: เพิ่มขั้นตอน `dotnet-serve -S` + `dotnet dev-certs https --trust` ใน External login providers section — จำเป็นสำหรับ provider SDK ที่บังคับ HTTPS (LIFF, Google Identity, MSAL, Facebook Login).
+
 ### v1.1.1 — 2026-09-21
 
 Adds three more external login providers on top of Google, sharing the same token-exchange flow (auto-link when local email is verified, reject `EMAIL_EXISTS_UNVERIFIED` otherwise, auto-provision new users with `EmailConfirmed=true` + `User` role) and the same fail-fast startup checks.
@@ -392,7 +450,7 @@ Adds three more external login providers on top of Google, sharing the same toke
 - Standalone API + library-mode consumer + Docker Compose + Sample + Unit/Integration tests
 
 ## Future: Next Plan
-- v1.1 candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
+- v1.x candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
 - Ops: HealthChecks (DB + SMTP), OpenTelemetry traces, structured logging correlationId
 
 ```

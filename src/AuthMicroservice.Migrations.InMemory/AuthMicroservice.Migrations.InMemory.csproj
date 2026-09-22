@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>AuthMicroservice.Migrations.InMemory</RootNamespace>
     <AssemblyName>AuthMicroservice.Migrations.InMemory</AssemblyName>
-    <PackageId>Kittipot.AuthMicroservice.Migrations.InMemory</PackageId>
+    <PackageId>Synergy.AuthMicroservice.Migrations.InMemory</PackageId>
     <IsPackable>true</IsPackable>
     <Description>EF Core InMemory provider adapter for AuthMicroservice.Core. Intended for tests and demos — not for production.</Description>
   </PropertyGroup>

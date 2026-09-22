@@ -3,7 +3,7 @@
   <PropertyGroup>
     <RootNamespace>AuthMicroservice.Core</RootNamespace>
     <AssemblyName>AuthMicroservice.Core</AssemblyName>
-    <PackageId>Kittipot.AuthMicroservice.Core</PackageId>
+    <PackageId>Synergy.AuthMicroservice.Core</PackageId>
     <IsPackable>true</IsPackable>
     <Description>Reusable authentication library for ASP.NET Core — JWT + refresh tokens, Identity, email verification and password reset.</Description>
   </PropertyGroup>

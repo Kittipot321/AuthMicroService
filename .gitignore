@@ -40,4 +40,5 @@ Thumbs.db
 .DS_Store
 
 ## Docs
-docs/
+docs/build-manual.py
+docs/AuthMicroservice-Manual-1.0.0.docx
