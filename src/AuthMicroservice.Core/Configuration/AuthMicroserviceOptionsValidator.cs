@@ -1,3 +1,4 @@
+using AuthMicroservice.Core.Domain;
 using Microsoft.Extensions.Options;
 
 namespace AuthMicroservice.Core.Configuration;
@@ -104,6 +105,90 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             if (options.ExternalProviders.ThaId.AllowedReturnUrlPrefixes.Count == 0)
             {
                 errors.Add("AuthMicroservice:ExternalProviders:ThaId:AllowedReturnUrlPrefixes must contain at least one entry when ThaId.Enabled=true.");
+            }
+        }
+
+        var seenRoleNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < options.Identity.Roles.AdditionalRoles.Count; i++)
+        {
+            var role = options.Identity.Roles.AdditionalRoles[i];
+            var path = $"AuthMicroservice:Identity:Roles:AdditionalRoles[{i}]";
+
+            if (string.IsNullOrWhiteSpace(role.Name))
+            {
+                errors.Add($"{path}:Name is required.");
+                continue;
+            }
+
+            if (role.Name.Length > 256)
+            {
+                errors.Add($"{path}:Name must be 256 characters or fewer.");
+            }
+
+            if (AuthRoles.System.Contains(role.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                errors.Add($"{path}:Name '{role.Name}' conflicts with a reserved system role.");
+            }
+
+            if (!seenRoleNames.Add(role.Name))
+            {
+                errors.Add($"{path}:Name '{role.Name}' is duplicated in AdditionalRoles.");
+            }
+
+            if (role.Description is { Length: > 256 })
+            {
+                errors.Add($"{path}:Description must be 256 characters or fewer.");
+            }
+        }
+
+        var knownRoles = new HashSet<string>(AuthRoles.System, StringComparer.OrdinalIgnoreCase);
+        foreach (var role in options.Identity.Roles.AdditionalRoles)
+        {
+            if (!string.IsNullOrWhiteSpace(role.Name))
+            {
+                knownRoles.Add(role.Name);
+            }
+        }
+
+        var defaultRole = options.Identity.Roles.DefaultRegistrationRole;
+        if (string.IsNullOrWhiteSpace(defaultRole))
+        {
+            errors.Add("AuthMicroservice:Identity:Roles:DefaultRegistrationRole is required.");
+        }
+        else if (defaultRole.Length > 256)
+        {
+            errors.Add("AuthMicroservice:Identity:Roles:DefaultRegistrationRole must be 256 characters or fewer.");
+        }
+        else if (!knownRoles.Contains(defaultRole))
+        {
+            errors.Add($"AuthMicroservice:Identity:Roles:DefaultRegistrationRole '{defaultRole}' does not match any system role or AdditionalRoles entry.");
+        }
+
+        var seenAllowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < options.Identity.Roles.AllowedSelfRegisterRoles.Count; i++)
+        {
+            var allowed = options.Identity.Roles.AllowedSelfRegisterRoles[i];
+            var path = $"AuthMicroservice:Identity:Roles:AllowedSelfRegisterRoles[{i}]";
+
+            if (string.IsNullOrWhiteSpace(allowed))
+            {
+                errors.Add($"{path} is required.");
+                continue;
+            }
+
+            if (allowed.Length > 256)
+            {
+                errors.Add($"{path} must be 256 characters or fewer.");
+            }
+
+            if (!knownRoles.Contains(allowed))
+            {
+                errors.Add($"{path} '{allowed}' does not match any system role or AdditionalRoles entry.");
+            }
+
+            if (!seenAllowed.Add(allowed))
+            {
+                errors.Add($"{path} '{allowed}' is duplicated in AllowedSelfRegisterRoles.");
             }
         }
 

@@ -574,6 +574,7 @@ public static class AuthEndpoints
             AuthErrorCodes.InvalidThaIdState => StatusCodes.Status400BadRequest,
             AuthErrorCodes.InvalidThaIdCode => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.ThaIdReturnUrlNotAllowed => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.InvalidRole => StatusCodes.Status400BadRequest,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
             _ => StatusCodes.Status400BadRequest

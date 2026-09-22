@@ -29,5 +29,9 @@ public sealed class RegisterRequestValidator : AbstractValidator<RegisterRequest
                 .WithMessage("Password must contain at least one non-alphanumeric character.");
 
         RuleFor(x => x.FullName).MaximumLength(200);
+
+        RuleFor(x => x.Role)
+            .MaximumLength(256)
+            .When(x => !string.IsNullOrWhiteSpace(x.Role));
     }
 }

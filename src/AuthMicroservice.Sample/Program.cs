@@ -1,3 +1,4 @@
+using AuthMicroservice.Core.Domain;
 using AuthMicroservice.Core.Extensions;
 using AuthMicroservice.Migrations.InMemory;
 using AuthMicroservice.Migrations.Sqlite;
@@ -24,7 +25,7 @@ app.MapGet("/whoami", (HttpContext http) => Results.Ok(new
     .RequireAuthorization();
 
 app.MapGet("/admin-only", () => Results.Ok(new { message = "You are an Admin." }))
-    .RequireAuthorization(new AuthorizeAttribute { Roles = "Admin" });
+    .RequireAuthorization(new AuthorizeAttribute { Roles = AuthRoles.Admin });
 
 await app.ApplyAuthMicroserviceMigrationsAsync();
 

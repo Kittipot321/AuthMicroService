@@ -27,4 +27,5 @@ public static class AuthErrorCodes
     public const string InvalidThaIdState = "INVALID_THAID_STATE";
     public const string InvalidThaIdCode = "INVALID_THAID_CODE";
     public const string ThaIdReturnUrlNotAllowed = "THAID_RETURN_URL_NOT_ALLOWED";
+    public const string InvalidRole = "INVALID_ROLE";
 }

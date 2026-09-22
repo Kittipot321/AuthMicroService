@@ -22,6 +22,7 @@ internal sealed class AuthService : IAuthService
     internal const string ThaIdLoginProvider = "ThaId";
 
     private readonly UserManager<ApplicationUser> _userManager;
+    private readonly RoleManager<ApplicationRole> _roleManager;
     private readonly SignInManager<ApplicationUser> _signInManager;
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IRefreshTokenService _refreshTokenService;
@@ -38,6 +39,7 @@ internal sealed class AuthService : IAuthService
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
+        RoleManager<ApplicationRole> roleManager,
         SignInManager<ApplicationUser> signInManager,
         IJwtTokenService jwtTokenService,
         IRefreshTokenService refreshTokenService,
@@ -53,6 +55,7 @@ internal sealed class AuthService : IAuthService
         ILogger<AuthService> logger)
     {
         _userManager = userManager;
+        _roleManager = roleManager;
         _signInManager = signInManager;
         _jwtTokenService = jwtTokenService;
         _refreshTokenService = refreshTokenService;
@@ -85,13 +88,24 @@ internal sealed class AuthService : IAuthService
             CreatedAt = _clock.UtcNow
         };
 
+        var roleResolution = await ResolveRegistrationRoleAsync(request.Role).ConfigureAwait(false);
+        if (!roleResolution.Ok)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidRole, roleResolution.Error!);
+        }
+
         var createResult = await _userManager.CreateAsync(user, request.Password).ConfigureAwait(false);
         if (!createResult.Succeeded)
         {
             return IdentityFailure<AuthResponse>(createResult);
         }
 
-        await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+        var addRoleResult = await _userManager.AddToRoleAsync(user, roleResolution.Role).ConfigureAwait(false);
+        if (!addRoleResult.Succeeded)
+        {
+            await _userManager.DeleteAsync(user).ConfigureAwait(false);
+            return IdentityFailure<AuthResponse>(addRoleResult);
+        }
 
         var verificationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user).ConfigureAwait(false);
         try
@@ -349,7 +363,7 @@ internal sealed class AuthService : IAuthService
                     return IdentityFailure<AuthResponse>(createResult);
                 }
 
-                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+                await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
 
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
@@ -428,7 +442,7 @@ internal sealed class AuthService : IAuthService
                     return IdentityFailure<AuthResponse>(createResult);
                 }
 
-                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+                await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
 
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
@@ -514,7 +528,7 @@ internal sealed class AuthService : IAuthService
                     return IdentityFailure<AuthResponse>(createResult);
                 }
 
-                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+                await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
 
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
@@ -604,7 +618,7 @@ internal sealed class AuthService : IAuthService
                     return IdentityFailure<AuthResponse>(createResult);
                 }
 
-                await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+                await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
 
                 var linkResult = await _userManager.AddLoginAsync(
                     user,
@@ -719,7 +733,7 @@ internal sealed class AuthService : IAuthService
                 return IdentityFailure<ThaIdCallbackResponse>(createResult);
             }
 
-            await _userManager.AddToRoleAsync(user, "User").ConfigureAwait(false);
+            await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
 
             var linkResult = await _userManager.AddLoginAsync(
                 user,
@@ -829,6 +843,47 @@ internal sealed class AuthService : IAuthService
             Roles = roles.ToArray(),
             Claims = claims.GroupBy(c => c.Type).ToDictionary(g => g.Key, g => string.Join(",", g.Select(c => c.Value)))
         };
+    }
+
+    private async Task<RoleResolution> ResolveRegistrationRoleAsync(string? requested)
+    {
+        var roleOptions = _authOptions.CurrentValue.Identity.Roles;
+        var defaultRole = roleOptions.DefaultRegistrationRole;
+
+        var target = string.IsNullOrWhiteSpace(requested) ? defaultRole : requested.Trim();
+
+        var isDefault = string.Equals(target, defaultRole, StringComparison.OrdinalIgnoreCase);
+        var isWhitelisted = roleOptions.AllowedSelfRegisterRoles
+            .Any(r => string.Equals(r, target, StringComparison.OrdinalIgnoreCase));
+
+        if (!isDefault && !isWhitelisted)
+        {
+            return RoleResolution.Fail($"Role '{target}' is not allowed for self-registration.");
+        }
+
+        if (!await _roleManager.RoleExistsAsync(target).ConfigureAwait(false))
+        {
+            return RoleResolution.Fail($"Role '{target}' does not exist.");
+        }
+
+        return RoleResolution.Success(target);
+    }
+
+    private readonly struct RoleResolution
+    {
+        private RoleResolution(bool ok, string role, string? error)
+        {
+            Ok = ok;
+            Role = role;
+            Error = error;
+        }
+
+        public bool Ok { get; }
+        public string Role { get; }
+        public string? Error { get; }
+
+        public static RoleResolution Success(string role) => new(true, role, null);
+        public static RoleResolution Fail(string error) => new(false, string.Empty, error);
     }
 
     private static AuthResult<T> IdentityFailure<T>(IdentityResult result)

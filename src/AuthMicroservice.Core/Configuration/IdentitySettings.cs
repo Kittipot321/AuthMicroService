@@ -9,6 +9,8 @@ public sealed class IdentitySettings
     public SignInSettings SignIn { get; set; } = new();
 
     public UserSettings User { get; set; } = new();
+
+    public RoleSeedOptions Roles { get; set; } = new();
 }
 
 public sealed class PasswordSettings
