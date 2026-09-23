@@ -12,7 +12,7 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
 
     <!-- Package metadata (ใส่เพิ่ม) -->
-    <Version>1.0.2</Version>
+    <Version>1.2.1</Version>
     <Authors>Synergy Software</Authors>
     <Company>Synergy Software</Company>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

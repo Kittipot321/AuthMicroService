@@ -90,7 +90,7 @@ app.Run();
 **สิ่งที่ได้หลัง Run:**
 - Endpoints: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `GET /auth/me`, ... (ดู [README](../README.md#api-endpoints-mounted-under-routeprefix-default-auth) — endpoint table)
 - Swagger UI ที่ `/swagger` (ถ้า `EnableSwagger=true`)
-- Roles `Admin` และ `User` ถูก seed อัตโนมัติ
+- Roles `Admin` และ `User` ถูก seed อัตโนมัติ — เพิ่ม custom roles ผ่าน `AuthMicroservice:Identity:Roles:AdditionalRoles` (ดู [README — Custom roles + assignable role at register](../README.md#custom-roles--assignable-role-at-register))
 
 **ต้องการ config-driven provider dispatch แทน fluent chaining?** ดู pattern ใน [src/AuthMicroservice.Api/Program.cs](../src/AuthMicroservice.Api/Program.cs) — เหมาะเมื่อ app เดียวต้อง support หลาย DB เลือก provider จาก `appsettings.json`
 
@@ -131,6 +131,8 @@ Minimum viable config (SQLite, ไม่ใช้ email) — paste ทั้ง�
 | `Email.Enabled=true` แต่ไม่มี `Smtp.Host` / `FromAddress` | error รายบรรทัด |
 | External provider `Enabled=true` แต่ไม่มี credentials | error รายบรรทัด |
 | `TokenLinks.EmailVerificationBaseUrl` หรือ `PasswordResetBaseUrl` ว่าง | required (ต้องมีทั้งคู่ แม้ปิด Email ก็ตาม) |
+| `Identity:Roles:AdditionalRoles[i]:Name` ว่าง / ชนกับ system role (`Admin`/`User`) / duplicate | error รายบรรทัด |
+| `Identity:Roles:DefaultRegistrationRole` หรือ entry ใน `AllowedSelfRegisterRoles` ชี้ไป role ที่ไม่มีจริง (system หรือ `AdditionalRoles`) | error รายบรรทัด |
 
 ### Step 4 — Set secrets ผ่าน environment variables
 
@@ -318,6 +320,13 @@ Invoke-RestMethod -Method POST -Uri http://localhost:8080/auth/forgot-password `
                           -Body (@{ email="alice@example.com"; password="wrong" } | ConvertTo-Json)
     } catch { Write-Host "Attempt $_ : $($_.Exception.Response.StatusCode)" }
 }
+
+# 8. Register ใน role เฉพาะ (ต้อง config Identity:Roles:AllowedSelfRegisterRoles ให้มี "Moderator" ก่อน
+#    + เพิ่มใน AdditionalRoles ถ้ายังไม่มี seed)
+$modReg = @{ email="mod@example.com"; password="P@ssw0rd!"; fullName="Mod"; role="Moderator" } | ConvertTo-Json
+Invoke-RestMethod -Method POST -Uri http://localhost:8080/auth/register `
+                  -ContentType "application/json" -Body $modReg
+# ถ้าส่ง role ที่ไม่อยู่ใน whitelist → 400 + errorCode "INVALID_ROLE"
 ```
 
 ผ่านหมดทั้ง 7 step = install สำเร็จ พร้อมขึ้น production (หลัง review Jwt.Key + connection string + SMTP + rate limiting)
@@ -337,6 +346,8 @@ Invoke-RestMethod -Method POST -Uri http://localhost:8080/auth/forgot-password `
 | Provider endpoint คืน 404 `{PROVIDER}_LOGIN_DISABLED` | ยัง set `ExternalProviders:{Provider}:Enabled` เป็น `true` |
 | `docker compose up` — `authmicroservice-db` แล้ว restart loop | SA password ไม่ตรง SQL Server complexity — ใช้ตัวอักษรใหญ่/เล็ก/ตัวเลข/สัญลักษณ์ + ยาว >= 8 |
 | Mailhog ไม่มี email | เช็ค `Email.Enabled=true` + `Smtp.Host=mailhog` (ใน compose) / `Smtp.Host=localhost` + `Smtp.Port=1025` (dev machine) |
+| `/auth/register` คืน 400 + errorCode `INVALID_ROLE` | `role` field ที่ส่งไปไม่อยู่ใน `Identity:Roles:AllowedSelfRegisterRoles` (และไม่ตรงกับ `DefaultRegistrationRole`) — เพิ่ม role name เข้า whitelist (ถ้ายัง seed ไม่ครบ ต้องเพิ่มใน `AdditionalRoles` ด้วย) |
+| Startup ตาย: `AdditionalRoles[i]:Name 'XYZ' conflicts with a reserved system role.` | ห้ามใช้ชื่อ `Admin` หรือ `User` เป็น custom role — เปลี่ยนชื่อใน `AdditionalRoles` |
 
 ---
 
@@ -347,3 +358,4 @@ Invoke-RestMethod -Method POST -Uri http://localhost:8080/auth/forgot-password `
 - **Working library-mode consumer เป็นตัวอย่าง**: [src/AuthMicroservice.Sample/](../src/AuthMicroservice.Sample/) — `dotnet run --project src/AuthMicroservice.Sample`
 - **Swap email transport เป็น SendGrid / SES / อื่นๆ**: [README — Swapping the email transport](../README.md#swapping-the-email-transport) — ทำผ่าน `services.AddSingleton<IEmailSender, ...>()`
 - **สร้าง migration ใหม่ (schema change)**: [README — EF Core migrations](../README.md#ef-core-migrations-per-provider) — ต้องรัน `dotnet ef migrations add` 3 ครั้ง (SqlServer / Postgres / Sqlite)
+- **Custom roles (Moderator, ContentCreator, ฯลฯ) + assignable role at register**: [README — Custom roles + assignable role at register](../README.md#custom-roles--assignable-role-at-register)

@@ -9,7 +9,7 @@ Reusable authentication component for ASP.NET Core 8 — usable **both** as a pl
 - Email verification link + password reset link (SMTP via MailKit; pluggable)
 - Change password (revokes existing refresh tokens)
 - Account lockout after N failed attempts
-- Roles + custom claims (ASP.NET Core Identity underneath)
+- Roles + custom claims (ASP.NET Core Identity underneath) — seed custom roles จาก config, สมัครใน role เฉพาะผ่าน `POST /auth/register` ได้ (ต้องอยู่ใน `AllowedSelfRegisterRoles`)
 - Provider-agnostic EF Core — pick **SqlServer / Postgres / Sqlite / InMemory** in `appsettings.json`
 - All config from `appsettings.json` / env vars — no hardcoded secrets
 - Swagger UI, Dockerfile + docker-compose (with Mailhog), sample consumer, unit + integration tests
@@ -63,7 +63,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 
 | Method | Route | Auth | Notes |
 |---|---|---|---|
-| POST | `/auth/register` | anon | 201 with tokens; sends verification email |
+| POST | `/auth/register` | anon | 201 with tokens; sends verification email. Optional `role` field — ต้องอยู่ใน `AllowedSelfRegisterRoles` (ไม่งั้น 400 `INVALID_ROLE`) |
 | POST | `/auth/login` | anon | 200 tokens · 401 bad creds · 403 unconfirmed · 423 lockout |
 | POST | `/auth/refresh` | anon | Rotates refresh; old refresh replay → 401 |
 | POST | `/auth/logout` | auth | Revokes one refresh token |
@@ -82,7 +82,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | GET | `/auth/external/thaid/challenge` | anon | `?returnUrl=...` → redirect ไปหน้า login ของ ThaID (สร้าง state + PKCE, เก็บใน state store). 404 unless `ExternalProviders:ThaId:Enabled=true` |
 | GET | `/auth/external/thaid/callback` | anon | `?code=&state=` จาก ThaID → verify state, แลก tokens ที่ Authority, ออก JWT + refresh, redirect กลับ `returnUrl` ที่ระบุใน challenge |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -172,7 +172,14 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "Password": { "RequiredLength": 8, "RequireDigit": true, "RequireLowercase": true, "RequireUppercase": true, "RequireNonAlphanumeric": true, "RequiredUniqueChars": 1 },
       "Lockout":  { "AllowedForNewUsers": true, "MaxFailedAccessAttempts": 5, "DefaultLockoutMinutes": 15 },
       "SignIn":   { "RequireConfirmedEmail": true, "RequireConfirmedPhoneNumber": false },
-      "User":     { "RequireUniqueEmail": true }
+      "User":     { "RequireUniqueEmail": true },
+      "Roles": {
+        "DefaultRegistrationRole": "User",              // role ที่ assign ให้ user ใหม่เมื่อ register ไม่ส่ง `role` field
+        "AllowedSelfRegisterRoles": [ ],                // whitelist role ที่ client ขอผ่าน POST /auth/register ได้ (นอกเหนือ default)
+        "AdditionalRoles": [                            // seed custom roles เพิ่มจาก system roles (Admin, User)
+          // { "Name": "Moderator", "Description": "Can moderate user content" }
+        ]
+      }
     },
     "TokenLinks": {
       "EmailVerificationBaseUrl": "https://app.example.com/verify-email",
@@ -205,7 +212,45 @@ Secrets are typically supplied via env vars using double-underscore syntax:
 - `AuthMicroservice__Database__ConnectionString`
 - `AuthMicroservice__Email__Smtp__Password`
 
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`, ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`.
+Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`, ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`. `Identity.Roles` ก็ถูก validate — `AdditionalRoles[].Name` ห้ามว่าง / เกิน 256 chars / ชนกับ system role (`Admin`/`User`) / ซ้ำกัน, และ `DefaultRegistrationRole` + ทุก entry ใน `AllowedSelfRegisterRoles` ต้องอ้างถึง role ที่มีอยู่จริง (system หรือ `AdditionalRoles`).
+
+## Custom roles + assignable role at register
+
+**System roles** — `Admin` และ `User` ถูก seed อัตโนมัติทุกครั้ง (`IsSystem=true`) ห้ามเปลี่ยน/ห้ามใช้ชื่อซ้ำใน custom roles
+
+**Custom roles** — เพิ่ม role ใหม่ผ่าน config `Identity.Roles.AdditionalRoles` โดยไม่ต้องแตะ DB เอง (idempotent upsert — เปลี่ยน `Description` ได้ทุกครั้ง app start):
+
+```jsonc
+"AuthMicroservice": {
+  "Identity": {
+    "Roles": {
+      "DefaultRegistrationRole": "User",
+      "AllowedSelfRegisterRoles": [ "User", "Moderator" ],
+      "AdditionalRoles": [
+        { "Name": "Moderator",      "Description": "Can moderate user content" },
+        { "Name": "ContentCreator", "Description": "Can create and publish content" }
+      ]
+    }
+  }
+}
+```
+
+**Role assignment ตอน register** — `POST /auth/register` รับ optional `role` field:
+
+- ไม่ส่ง `role` (หรือส่ง empty) → assign `DefaultRegistrationRole` (default `"User"`)
+- ส่ง `role` = `DefaultRegistrationRole` หรือค่าที่อยู่ใน `AllowedSelfRegisterRoles` → assign role นั้น
+- ส่ง `role` ที่ไม่ผ่าน whitelist หรือไม่มีใน DB → **400 `INVALID_ROLE`** (validation ก่อน create user — ไม่มี orphan)
+
+```http
+POST /auth/register
+Content-Type: application/json
+
+{ "email": "mod@example.com", "password": "P@ssw0rd!", "fullName": "Mod", "role": "Moderator" }
+```
+
+**`ApplicationRole` metadata** — DB schema เพิ่ม 3 columns (migration `AddRoleMetadata`): `Description` (nvarchar(256), nullable), `IsSystem` (bit, `true` เฉพาะ Admin/User), `CreatedAtUtc` (datetime2). Apply อัตโนมัติเมื่อ `AutoMigrate=true`
+
+**External login flows** (Google / Microsoft / Facebook / LINE / ThaID) ยังคง assign `AuthRoles.User` ให้ user ที่ auto-provision — **ไม่รับ** `role` parameter (ถ้าต้องการควบคุมสิทธิ์ให้ผ่าน admin promote role ทีหลัง)
 
 ## External login providers
 
@@ -329,6 +374,8 @@ dotnet serve -d c:\Code\AuthMicroServices -p 5001 -S    # -S = HTTPS
 
 ## EF Core migrations (per provider)
 
+> **จะ pack เป็น NuGet เอง?** ดู [docs/PACKAGING.md](docs/PACKAGING.md) — pre-pack checklist, `dotnet pack` workflow, local folder feed สำหรับ smoke test ก่อน publish จริง
+
 Migrations are per-provider assemblies. To generate a new migration:
 
 ```powershell
@@ -410,6 +457,13 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 ทดสอบขั้นถัดไป (optional): dotnet run --project src/AuthMicroservice.Sample เพื่อยิง Swagger UI ที่ http://localhost:5100/swagger
 
 ## Changelog
+
+### v1.2.1 — 2026-09-22
+
+- **Custom roles + assignable role at registration**: new config `AuthMicroservice:Identity:Roles:{DefaultRegistrationRole, AllowedSelfRegisterRoles, AdditionalRoles}` — seed extra roles (Moderator, ContentCreator, ฯลฯ) ผ่าน config โดยไม่ต้องแตะ DB เอง. `POST /auth/register` รับ optional `role` field — ถ้าอยู่ใน `AllowedSelfRegisterRoles` (หรือตรงกับ `DefaultRegistrationRole`) จะ assign role นั้นให้ user ใหม่, ไม่งั้น 400 `INVALID_ROLE`. Role validation happens **ก่อน** create user (fail-fast — no orphan users). External login flows (Google / Microsoft / Facebook / LINE / ThaID) ยังคง assign เฉพาะ `AuthRoles.User` — ไม่รับ `role` parameter.
+- **`ApplicationRole` metadata**: เพิ่ม 3 columns — `Description` (nvarchar(256), nullable), `IsSystem` (bit, `true` สำหรับ Admin/User และ `false` สำหรับ custom roles), `CreatedAtUtc` (datetime2). Migration `AddRoleMetadata` generate ครบทั้ง 3 provider (SqlServer / Postgres / Sqlite) — apply อัตโนมัติถ้า `AutoMigrate=true`.
+- **Startup fail-fast validation for roles**: `AdditionalRoles[].Name` required + ≤256 chars + ห้ามชนกับ system role + ห้าม duplicate; `AdditionalRoles[].Description` ≤256 chars; `DefaultRegistrationRole` required + ต้องอ้างถึง role ที่มีอยู่จริง; `AllowedSelfRegisterRoles[]` required + ต้องอ้างถึง role ที่มีอยู่จริง + ห้าม duplicate. Error code ใหม่: `INVALID_ROLE` (400).
+- **Backward compatible**: `role` field เป็น optional (payload เดิม fallback = `DefaultRegistrationRole = "User"`). Default `AllowedSelfRegisterRoles = []` และ `AdditionalRoles = []` — ถ้าไม่ตั้ง config อะไรเลย พฤติกรรมเหมือนก่อนหน้าทุกอย่าง.
 
 ### v1.2.0 — 2026-09-22
 
