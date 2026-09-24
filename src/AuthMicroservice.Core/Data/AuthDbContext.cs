@@ -15,6 +15,8 @@ public class AuthDbContext : IdentityDbContext<ApplicationUser, ApplicationRole,
 
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
+    public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

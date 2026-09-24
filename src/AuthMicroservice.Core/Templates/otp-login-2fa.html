@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<body style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; background: #f6f7fb; padding: 24px;">
+  <div style="max-width: 480px; margin: 0 auto; background: #ffffff; border-radius: 8px; padding: 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+    <h2 style="margin-top: 0; color: #111827;">Your login code</h2>
+    <p style="color: #374151; line-height: 1.5;">Hi {{UserName}},</p>
+    <p style="color: #374151; line-height: 1.5;">Someone (hopefully you) just signed in with your password. To finish signing in, enter this code:</p>
+    <p style="text-align: center; margin: 32px 0;">
+      <span style="display: inline-block; background: #ecfdf5; color: #047857; font-family: 'Menlo', 'Consolas', monospace; font-size: 32px; font-weight: 700; letter-spacing: 8px; padding: 16px 28px; border-radius: 8px;">{{Code}}</span>
+    </p>
+    <p style="color: #6b7280; font-size: 13px; line-height: 1.5;">This code expires in {{ExpiresInMinutes}} minutes. If this wasn't you, change your password immediately — someone else may know it.</p>
+  </div>
+</body>
+</html>

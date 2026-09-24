@@ -33,4 +33,8 @@ public sealed class EmailTemplateOptions
     public string VerifyEmailSubject { get; set; } = "Verify your email";
 
     public string PasswordResetSubject { get; set; } = "Reset your password";
+
+    public string OtpEmailVerificationSubject { get; set; } = "Your verification code";
+
+    public string OtpLoginTwoFactorSubject { get; set; } = "Your login code";
 }

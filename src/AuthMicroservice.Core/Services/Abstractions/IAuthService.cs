@@ -39,4 +39,16 @@ public interface IAuthService
     Task<AuthResult<ThaIdCallbackResponse>> LoginWithThaIdCallbackAsync(string code, string state, string? ipAddress, CancellationToken cancellationToken = default);
 
     Task<UserResponse?> GetCurrentUserAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<TwoFactorRequiredResponse>> SendEmailVerificationOtpAsync(SendEmailVerificationOtpRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> VerifyEmailWithOtpAsync(VerifyEmailOtpRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<AuthResponse>> LoginTwoFactorVerifyAsync(LoginTwoFactorRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<TwoFactorRequiredResponse>> EnableTwoFactorRequestAsync(Guid userId, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> EnableTwoFactorConfirmAsync(Guid userId, Enable2FaConfirmRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> DisableTwoFactorAsync(Guid userId, Disable2FaRequest request, CancellationToken cancellationToken = default);
 }

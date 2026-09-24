@@ -81,8 +81,14 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
 | GET | `/auth/external/thaid/challenge` | anon | `?returnUrl=...` → redirect ไปหน้า login ของ ThaID (สร้าง state + PKCE, เก็บใน state store). 404 unless `ExternalProviders:ThaId:Enabled=true` |
 | GET | `/auth/external/thaid/callback` | anon | `?code=&state=` จาก ThaID → verify state, แลก tokens ที่ Authority, ออก JWT + refresh, redirect กลับ `returnUrl` ที่ระบุใน challenge |
+| POST | `/auth/otp/email/send` | anon | ส่ง 6-digit OTP ไปยัง email เพื่อ verify — silent success ถ้า email ไม่มี/verified แล้ว |
+| POST | `/auth/otp/email/verify` | anon | `{email, code}` — ยืนยัน OTP → set `EmailConfirmed=true` |
+| POST | `/auth/login/2fa/verify` | anon | `{email, code}` — ยืนยัน login OTP หลัง `/auth/login` ตอบ 202 (`TWO_FACTOR_REQUIRED`) |
+| POST | `/auth/2fa/enable-request` | auth | ส่ง OTP ไป email เพื่อเปิด 2FA |
+| POST | `/auth/2fa/enable-confirm` | auth | `{code}` — ยืนยัน OTP → `TwoFactorEnabled=true` |
+| POST | `/auth/2fa/disable` | auth | `{password}` — ปิด 2FA (ต้องยืนยัน password) |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -166,7 +172,20 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "FromAddress": "no-reply@example.com",
       "FromName": "Auth Service",
       "Smtp": { "Host": "localhost", "Port": 1025, "UseStartTls": false, "UseSsl": false, "Username": "", "Password": "" },
-      "Templates": { "VerifyEmailSubject": "Verify your email", "PasswordResetSubject": "Reset your password" }
+      "Templates": {
+        "VerifyEmailSubject": "Verify your email",
+        "PasswordResetSubject": "Reset your password",
+        "OtpEmailVerificationSubject": "Your verification code",
+        "OtpLoginTwoFactorSubject": "Your login code"
+      }
+    },
+    "Otp": {
+      "CodeLength": 6,                       // 4–10 digits
+      "ExpirationMinutes": 10,
+      "MaxAttempts": 5,                      // per code, before it's invalidated
+      "ResendCooldownSeconds": 60,           // between successive generate calls for same user+purpose
+      "EmailVerification": { "Enabled": true },
+      "LoginTwoFactor":    { "Enabled": true }
     },
     "Identity": {
       "Password": { "RequiredLength": 8, "RequireDigit": true, "RequireLowercase": true, "RequireUppercase": true, "RequireNonAlphanumeric": true, "RequiredUniqueChars": 1 },
@@ -458,6 +477,18 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 
 ## Changelog
 
+### v1.3.0 — 2026-09-23
+
+- **Email OTP (6-digit)** สำหรับ 2 flows — ทางเลือกคู่ขนานกับ link-based flow เดิม (toggle ได้):
+  - **Email verification via OTP** — `POST /auth/otp/email/send` + `POST /auth/otp/email/verify` (แทน/เสริม verify-email link)
+  - **Login 2FA** — user ที่ `TwoFactorEnabled=true` เมื่อ login สำเร็จด้วย password จะได้ 202 (`TWO_FACTOR_REQUIRED`) + OTP ส่งไปที่ email → ต้อง `POST /auth/login/2fa/verify {email, code}` เพื่อรับ JWT. Enable/disable ผ่าน `POST /auth/2fa/enable-request` → `POST /auth/2fa/enable-confirm` (auth required) และ `POST /auth/2fa/disable` (require password confirm)
+  - Password reset ยังใช้ token-based link flow เดิม (`POST /auth/forgot-password` + `POST /auth/reset-password`) — ไม่มี OTP variant
+- **Storage & security**: OTP เก็บใน `auth.OtpCodes` (ไม่เก็บ plaintext) — SHA-256(code + per-code random salt), constant-time compare, per-user+purpose invalidation ก่อน generate ใหม่, per-code MaxAttempts + resend cooldown, silent-success สำหรับ send endpoints (กัน account enumeration). Migration `AddOtpCodes` ครบ 3 provider (SqlServer / Postgres / Sqlite).
+- **Config**: ใหม่ `AuthMicroservice:Otp:{CodeLength, ExpirationMinutes, MaxAttempts, ResendCooldownSeconds, {EmailVerification, LoginTwoFactor}.Enabled}` — startup validate `CodeLength ∈ [4,10]`, `ExpirationMinutes > 0`, ฯลฯ. Endpoint toggles ใหม่ใน `AuthMicroservice:Endpoints:*` — ทุก endpoint เปิด/ปิด/hide-from-swagger ได้แยกกันเหมือน pattern เดิม.
+- **Error codes ใหม่**: `TWO_FACTOR_REQUIRED` (202), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` (409).
+- **Test harness**: [test-html/test-otp.html](test-html/test-otp.html) — Bootstrap 5 single-page console ครอบ 2 flows พร้อม log JSON response
+- **Extending `IEmailService`**: เพิ่ม `SendOtpAsync(user, code, purpose, expiresInMinutes, ct)` + 2 embedded HTML templates (`otp-email-verification.html`, `otp-login-2fa.html`) — replace ได้เหมือน `IEmailSender` เดิม
+
 ### v1.2.1 — 2026-09-22
 
 - **Custom roles + assignable role at registration**: new config `AuthMicroservice:Identity:Roles:{DefaultRegistrationRole, AllowedSelfRegisterRoles, AdditionalRoles}` — seed extra roles (Moderator, ContentCreator, ฯลฯ) ผ่าน config โดยไม่ต้องแตะ DB เอง. `POST /auth/register` รับ optional `role` field — ถ้าอยู่ใน `AllowedSelfRegisterRoles` (หรือตรงกับ `DefaultRegistrationRole`) จะ assign role นั้นให้ user ใหม่, ไม่งั้น 400 `INVALID_ROLE`. Role validation happens **ก่อน** create user (fail-fast — no orphan users). External login flows (Google / Microsoft / Facebook / LINE / ThaID) ยังคง assign เฉพาะ `AuthRoles.User` — ไม่รับ `role` parameter.
@@ -504,7 +535,7 @@ Adds three more external login providers on top of Google, sharing the same toke
 - Standalone API + library-mode consumer + Docker Compose + Sample + Unit/Integration tests
 
 ## Future: Next Plan
-- v1.x candidates: 2FA (TOTP), external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
+- v1.x candidates: ~~2FA (Email OTP)~~ ✅ / TOTP (authenticator apps) / SMS OTP, external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
 - Ops: HealthChecks (DB + SMTP), OpenTelemetry traces, structured logging correlationId
 
 ```

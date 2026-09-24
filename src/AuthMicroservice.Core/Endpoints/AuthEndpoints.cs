@@ -90,6 +90,48 @@ public static class AuthEndpoints
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem());
 
+        MapIf(toggles.SendEmailVerificationOtp, swaggerEnabled, () => group.MapPost("/otp/email/send", SendEmailVerificationOtpAsync)
+            .WithName("AuthSendEmailVerificationOtp")
+            .AllowAnonymous()
+            .Produces<TwoFactorRequiredResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.VerifyEmailOtp, swaggerEnabled, () => group.MapPost("/otp/email/verify", VerifyEmailWithOtpAsync)
+            .WithName("AuthVerifyEmailWithOtp")
+            .AllowAnonymous()
+            .Produces<MessageResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.LoginTwoFactorVerify, swaggerEnabled, () => group.MapPost("/login/2fa/verify", LoginTwoFactorVerifyAsync)
+            .WithName("AuthLoginTwoFactorVerify")
+            .AllowAnonymous()
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.TwoFactorEnableRequest, swaggerEnabled, () => group.MapPost("/2fa/enable-request", TwoFactorEnableRequestAsync)
+            .WithName("AuthTwoFactorEnableRequest")
+            .RequireAuthorization()
+            .Produces<TwoFactorRequiredResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests));
+
+        MapIf(toggles.TwoFactorEnableConfirm, swaggerEnabled, () => group.MapPost("/2fa/enable-confirm", TwoFactorEnableConfirmAsync)
+            .WithName("AuthTwoFactorEnableConfirm")
+            .RequireAuthorization()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.TwoFactorDisable, swaggerEnabled, () => group.MapPost("/2fa/disable", TwoFactorDisableAsync)
+            .WithName("AuthTwoFactorDisable")
+            .RequireAuthorization()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
         MapIf(toggles.Me, swaggerEnabled, () => group.MapGet("/me", GetCurrentUserAsync)
             .WithName("AuthMe")
             .RequireAuthorization()
@@ -228,6 +270,7 @@ public static class AuthEndpoints
         LoginRequest request,
         IAuthService authService,
         IValidator<LoginRequest> validator,
+        IOptions<AuthMicroserviceOptions> authOptions,
         HttpContext http,
         CancellationToken cancellationToken)
     {
@@ -237,7 +280,23 @@ public static class AuthEndpoints
         }
 
         var result = await authService.LoginAsync(request, ResolveIp(http), cancellationToken);
-        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+        if (result.Succeeded)
+        {
+            return Results.Ok(result.Value);
+        }
+
+        if (result.ErrorCode == AuthErrorCodes.TwoFactorRequired)
+        {
+            var otp = authOptions.Value.Otp;
+            return Results.Json(new TwoFactorRequiredResponse
+            {
+                Email = request.Email,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(otp.ExpirationMinutes),
+                Message = result.ErrorMessage ?? "Two-factor verification required."
+            }, statusCode: StatusCodes.Status202Accepted);
+        }
+
+        return ToProblem(result);
     }
 
     private static async Task<IResult> RefreshAsync(
@@ -520,6 +579,111 @@ public static class AuthEndpoints
         return Results.Redirect(returnUrl + fragment);
     }
 
+    private static async Task<IResult> SendEmailVerificationOtpAsync(
+        SendEmailVerificationOtpRequest request,
+        IAuthService authService,
+        IValidator<SendEmailVerificationOtpRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.SendEmailVerificationOtpAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> VerifyEmailWithOtpAsync(
+        VerifyEmailOtpRequest request,
+        IAuthService authService,
+        IValidator<VerifyEmailOtpRequest> validator,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.VerifyEmailWithOtpAsync(request, cancellationToken);
+        return result.Succeeded
+            ? Results.Ok(new MessageResponse("Email verified."))
+            : ToProblem(result);
+    }
+
+    private static async Task<IResult> LoginTwoFactorVerifyAsync(
+        LoginTwoFactorRequest request,
+        IAuthService authService,
+        IValidator<LoginTwoFactorRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginTwoFactorVerifyAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> TwoFactorEnableRequestAsync(
+        IAuthService authService,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var result = await authService.EnableTwoFactorRequestAsync(userId, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> TwoFactorEnableConfirmAsync(
+        Enable2FaConfirmRequest request,
+        IAuthService authService,
+        IValidator<Enable2FaConfirmRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.EnableTwoFactorConfirmAsync(userId, request, cancellationToken);
+        return result.Succeeded ? Results.NoContent() : ToProblem(result);
+    }
+
+    private static async Task<IResult> TwoFactorDisableAsync(
+        Disable2FaRequest request,
+        IAuthService authService,
+        IValidator<Disable2FaRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.DisableTwoFactorAsync(userId, request, cancellationToken);
+        return result.Succeeded ? Results.NoContent() : ToProblem(result);
+    }
+
     private static async Task<IResult> GetCurrentUserAsync(
         IAuthService authService,
         HttpContext http,
@@ -577,6 +741,14 @@ public static class AuthEndpoints
             AuthErrorCodes.InvalidRole => StatusCodes.Status400BadRequest,
             AuthErrorCodes.WeakPassword => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ValidationFailed => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.InvalidOtp => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.OtpExpired => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.OtpAttemptsExceeded => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.OtpCooldownActive => StatusCodes.Status429TooManyRequests,
+            AuthErrorCodes.OtpDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.TwoFactorNotEnabled => StatusCodes.Status409Conflict,
+            AuthErrorCodes.TwoFactorAlreadyEnabled => StatusCodes.Status409Conflict,
+            AuthErrorCodes.UserNotFound => StatusCodes.Status404NotFound,
             _ => StatusCodes.Status400BadRequest
         };
 

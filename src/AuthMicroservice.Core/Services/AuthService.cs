@@ -27,6 +27,7 @@ internal sealed class AuthService : IAuthService
     private readonly IJwtTokenService _jwtTokenService;
     private readonly IRefreshTokenService _refreshTokenService;
     private readonly IEmailService _emailService;
+    private readonly IOtpService _otpService;
     private readonly IGoogleTokenValidator _googleTokenValidator;
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IFacebookTokenValidator _facebookTokenValidator;
@@ -44,6 +45,7 @@ internal sealed class AuthService : IAuthService
         IJwtTokenService jwtTokenService,
         IRefreshTokenService refreshTokenService,
         IEmailService emailService,
+        IOtpService otpService,
         IGoogleTokenValidator googleTokenValidator,
         IMicrosoftTokenValidator microsoftTokenValidator,
         IFacebookTokenValidator facebookTokenValidator,
@@ -60,6 +62,7 @@ internal sealed class AuthService : IAuthService
         _jwtTokenService = jwtTokenService;
         _refreshTokenService = refreshTokenService;
         _emailService = emailService;
+        _otpService = otpService;
         _googleTokenValidator = googleTokenValidator;
         _microsoftTokenValidator = microsoftTokenValidator;
         _facebookTokenValidator = facebookTokenValidator;
@@ -144,6 +147,29 @@ internal sealed class AuthService : IAuthService
         if (!signIn.Succeeded)
         {
             return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidCredentials, "Invalid email or password.");
+        }
+
+        var otpOptions = _authOptions.CurrentValue.Otp;
+        if (user.TwoFactorEnabled && otpOptions.LoginTwoFactor.Enabled)
+        {
+            var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.LoginTwoFactor, ipAddress, cancellationToken).ConfigureAwait(false);
+            if (!generate.Succeeded || generate.Value is null)
+            {
+                return AuthResult<AuthResponse>.Failure(generate.ErrorCode ?? AuthErrorCodes.InvalidOtp, generate.ErrorMessage ?? "Failed to send verification code.");
+            }
+
+            try
+            {
+                await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.LoginTwoFactor, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send 2FA login code to {Email}.", user.Email);
+            }
+
+            return AuthResult<AuthResponse>.Failure(
+                AuthErrorCodes.TwoFactorRequired,
+                $"Two-factor verification required. Code sent to {MaskEmail(user.Email)}.");
         }
 
         user.LastLoginAt = _clock.UtcNow;
@@ -884,6 +910,215 @@ internal sealed class AuthService : IAuthService
 
         public static RoleResolution Success(string role) => new(true, role, null);
         public static RoleResolution Fail(string error) => new(false, string.Empty, error);
+    }
+
+    public async Task<AuthResult<TwoFactorRequiredResponse>> SendEmailVerificationOtpAsync(SendEmailVerificationOtpRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        var otpOptions = _authOptions.CurrentValue.Otp;
+        if (!otpOptions.EmailVerification.Enabled)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.OtpDisabled, "Email verification via OTP is disabled.");
+        }
+
+        var user = await _userManager.FindByEmailAsync(request.Email).ConfigureAwait(false);
+        var silent = AuthResult<TwoFactorRequiredResponse>.Success(new TwoFactorRequiredResponse
+        {
+            Email = request.Email,
+            ExpiresAt = _clock.UtcNow.AddMinutes(otpOptions.ExpirationMinutes),
+            Message = "If the account exists and is not verified, a code has been sent."
+        });
+
+        if (user is null || user.EmailConfirmed || user.IsDeactivated)
+        {
+            return silent;
+        }
+
+        var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.EmailVerification, ipAddress, cancellationToken).ConfigureAwait(false);
+        if (!generate.Succeeded || generate.Value is null)
+        {
+            if (generate.ErrorCode == AuthErrorCodes.OtpCooldownActive)
+            {
+                return AuthResult<TwoFactorRequiredResponse>.Failure(generate.ErrorCode, generate.ErrorMessage ?? "Please wait before requesting another code.");
+            }
+            return silent;
+        }
+
+        try
+        {
+            await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.EmailVerification, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send email verification OTP to {Email}.", user.Email);
+        }
+
+        return silent;
+    }
+
+    public async Task<AuthResult> VerifyEmailWithOtpAsync(VerifyEmailOtpRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!_authOptions.CurrentValue.Otp.EmailVerification.Enabled)
+        {
+            return AuthResult.Failure(AuthErrorCodes.OtpDisabled, "Email verification via OTP is disabled.");
+        }
+
+        var user = await _userManager.FindByEmailAsync(request.Email).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated)
+        {
+            return AuthResult.Failure(AuthErrorCodes.InvalidOtp, "Invalid code.");
+        }
+
+        if (user.EmailConfirmed)
+        {
+            return AuthResult.Success();
+        }
+
+        var verify = await _otpService.VerifyAsync(user.Id, OtpPurpose.EmailVerification, request.Code, cancellationToken).ConfigureAwait(false);
+        if (!verify.Succeeded)
+        {
+            return verify;
+        }
+
+        user.EmailConfirmed = true;
+        await _userManager.UpdateSecurityStampAsync(user).ConfigureAwait(false);
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+        return AuthResult.Success();
+    }
+
+    public async Task<AuthResult<AuthResponse>> LoginTwoFactorVerifyAsync(LoginTwoFactorRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        if (!_authOptions.CurrentValue.Otp.LoginTwoFactor.Enabled)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.OtpDisabled, "Two-factor login via OTP is disabled.");
+        }
+
+        var user = await _userManager.FindByEmailAsync(request.Email).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated || !user.TwoFactorEnabled)
+        {
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidOtp, "Invalid code.");
+        }
+
+        var verify = await _otpService.VerifyAsync(user.Id, OtpPurpose.LoginTwoFactor, request.Code, cancellationToken).ConfigureAwait(false);
+        if (!verify.Succeeded)
+        {
+            return AuthResult<AuthResponse>.Failure(verify.ErrorCode ?? AuthErrorCodes.InvalidOtp, verify.ErrorMessage ?? "Invalid code.");
+        }
+
+        user.LastLoginAt = _clock.UtcNow;
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public async Task<AuthResult<TwoFactorRequiredResponse>> EnableTwoFactorRequestAsync(Guid userId, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        var otpOptions = _authOptions.CurrentValue.Otp;
+        if (!otpOptions.LoginTwoFactor.Enabled)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.OtpDisabled, "Two-factor login via OTP is disabled.");
+        }
+
+        var user = await _userManager.FindByIdAsync(userId.ToString()).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.UserNotFound, "User not found.");
+        }
+
+        if (user.TwoFactorEnabled)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.TwoFactorAlreadyEnabled, "Two-factor is already enabled.");
+        }
+
+        var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.LoginTwoFactor, ipAddress, cancellationToken).ConfigureAwait(false);
+        if (!generate.Succeeded || generate.Value is null)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(generate.ErrorCode ?? AuthErrorCodes.InvalidOtp, generate.ErrorMessage ?? "Failed to generate code.");
+        }
+
+        try
+        {
+            await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.LoginTwoFactor, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send 2FA enable code to {Email}.", user.Email);
+        }
+
+        return AuthResult<TwoFactorRequiredResponse>.Success(new TwoFactorRequiredResponse
+        {
+            Email = user.Email ?? string.Empty,
+            ExpiresAt = _clock.UtcNow.AddMinutes(otpOptions.ExpirationMinutes),
+            Message = $"Code sent to {MaskEmail(user.Email)}."
+        });
+    }
+
+    public async Task<AuthResult> EnableTwoFactorConfirmAsync(Guid userId, Enable2FaConfirmRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString()).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated)
+        {
+            return AuthResult.Failure(AuthErrorCodes.UserNotFound, "User not found.");
+        }
+
+        if (user.TwoFactorEnabled)
+        {
+            return AuthResult.Failure(AuthErrorCodes.TwoFactorAlreadyEnabled, "Two-factor is already enabled.");
+        }
+
+        var verify = await _otpService.VerifyAsync(user.Id, OtpPurpose.LoginTwoFactor, request.Code, cancellationToken).ConfigureAwait(false);
+        if (!verify.Succeeded)
+        {
+            return verify;
+        }
+
+        user.TwoFactorEnabled = true;
+        await _userManager.UpdateSecurityStampAsync(user).ConfigureAwait(false);
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+        return AuthResult.Success();
+    }
+
+    public async Task<AuthResult> DisableTwoFactorAsync(Guid userId, Disable2FaRequest request, CancellationToken cancellationToken = default)
+    {
+        var user = await _userManager.FindByIdAsync(userId.ToString()).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated)
+        {
+            return AuthResult.Failure(AuthErrorCodes.UserNotFound, "User not found.");
+        }
+
+        if (!user.TwoFactorEnabled)
+        {
+            return AuthResult.Failure(AuthErrorCodes.TwoFactorNotEnabled, "Two-factor is not enabled.");
+        }
+
+        if (!await _userManager.CheckPasswordAsync(user, request.Password).ConfigureAwait(false))
+        {
+            return AuthResult.Failure(AuthErrorCodes.InvalidCredentials, "Invalid password.");
+        }
+
+        user.TwoFactorEnabled = false;
+        await _userManager.UpdateSecurityStampAsync(user).ConfigureAwait(false);
+        await _userManager.UpdateAsync(user).ConfigureAwait(false);
+        return AuthResult.Success();
+    }
+
+    private static string MaskEmail(string? email)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            return "your inbox";
+        }
+
+        var at = email.IndexOf('@');
+        if (at <= 1)
+        {
+            return "*" + email[Math.Max(0, at)..];
+        }
+
+        var local = email[..at];
+        var domain = email[at..];
+        var visible = local.Length <= 2 ? local[..1] : local[..2];
+        return $"{visible}{new string('*', Math.Max(1, local.Length - visible.Length))}{domain}";
     }
 
     private static AuthResult<T> IdentityFailure<T>(IdentityResult result)

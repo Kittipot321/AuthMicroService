@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>OTP Test Console</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" />
+  <style>
+    body { padding: 24px; background: #f8f9fa; }
+    .card { margin-bottom: 24px; }
+    pre { background: #212529; color: #f8f9fa; padding: 12px; border-radius: 6px; max-height: 240px; overflow: auto; font-size: 12px; }
+    .code-input { font-family: monospace; letter-spacing: 6px; text-align: center; font-size: 22px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="mb-4">AuthMicroservice — OTP Test Console</h1>
+    <div class="mb-3">
+      <label class="form-label">API Base URL</label>
+      <input id="baseUrl" class="form-control" value="http://localhost:5100/auth" />
+    </div>
+
+    <!-- Section 1: Email verification via OTP -->
+    <div class="card">
+      <div class="card-header"><strong>1. Email verification via OTP</strong></div>
+      <div class="card-body">
+        <div class="mb-2">
+          <label class="form-label">Email</label>
+          <input id="verifyEmail" class="form-control" placeholder="user@example.com" />
+        </div>
+        <button class="btn btn-primary me-2" onclick="sendEmailOtp()">Send OTP</button>
+        <div class="mt-3">
+          <label class="form-label">Code</label>
+          <input id="verifyCode" class="form-control code-input" maxlength="6" placeholder="000000" />
+        </div>
+        <button class="btn btn-success mt-2" onclick="verifyEmailOtp()">Verify email</button>
+        <pre id="verifyLog"></pre>
+      </div>
+    </div>
+
+    <!-- Section 2: Login 2FA -->
+    <div class="card">
+      <div class="card-header"><strong>2. Login with 2FA</strong></div>
+      <div class="card-body">
+        <div class="row g-2">
+          <div class="col">
+            <input id="loginEmail" class="form-control" placeholder="Email" />
+          </div>
+          <div class="col">
+            <input id="loginPassword" type="password" class="form-control" placeholder="Password" />
+          </div>
+        </div>
+        <div class="mt-2">
+          <button class="btn btn-primary me-2" onclick="login()">Login</button>
+          <button class="btn btn-outline-secondary me-2" onclick="enable2FaRequest()">Enable 2FA (request)</button>
+          <button class="btn btn-outline-danger" onclick="disable2Fa()">Disable 2FA</button>
+        </div>
+        <div class="mt-3">
+          <label class="form-label">OTP Code (login or enable-confirm)</label>
+          <input id="loginCode" class="form-control code-input" maxlength="6" placeholder="000000" />
+          <div class="mt-2">
+            <button class="btn btn-success me-2" onclick="loginVerify2Fa()">Verify login 2FA</button>
+            <button class="btn btn-warning" onclick="enable2FaConfirm()">Confirm enable 2FA</button>
+          </div>
+        </div>
+        <pre id="loginLog"></pre>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const base = () => document.getElementById('baseUrl').value.replace(/\/$/, '');
+    let bearer = null;
+
+    async function call(method, path, body) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (bearer) headers['Authorization'] = 'Bearer ' + bearer;
+      const opts = { method, headers };
+      if (body !== undefined) opts.body = JSON.stringify(body);
+      const res = await fetch(base() + path, opts);
+      const text = await res.text();
+      let parsed = text;
+      try { parsed = JSON.parse(text); } catch (_) { /* leave as text */ }
+      return { status: res.status, body: parsed };
+    }
+
+    const log = (id, ...args) => {
+      const el = document.getElementById(id);
+      el.textContent = args.map(a => typeof a === 'string' ? a : JSON.stringify(a, null, 2)).join('\n') + '\n\n' + el.textContent;
+    };
+
+    async function sendEmailOtp() {
+      const r = await call('POST', '/otp/email/send', { email: document.getElementById('verifyEmail').value });
+      log('verifyLog', 'POST /otp/email/send', r);
+    }
+
+    async function verifyEmailOtp() {
+      const r = await call('POST', '/otp/email/verify', {
+        email: document.getElementById('verifyEmail').value,
+        code: document.getElementById('verifyCode').value
+      });
+      log('verifyLog', 'POST /otp/email/verify', r);
+    }
+
+    async function login() {
+      const r = await call('POST', '/login', {
+        email: document.getElementById('loginEmail').value,
+        password: document.getElementById('loginPassword').value
+      });
+      if (r.status === 200 && r.body.accessToken) {
+        bearer = r.body.accessToken;
+        log('loginLog', 'Login OK — bearer captured', r);
+      } else if (r.status === 202) {
+        log('loginLog', 'Login: 2FA required — enter OTP and click "Verify login 2FA"', r);
+      } else {
+        log('loginLog', 'Login failed', r);
+      }
+    }
+
+    async function loginVerify2Fa() {
+      const r = await call('POST', '/login/2fa/verify', {
+        email: document.getElementById('loginEmail').value,
+        code: document.getElementById('loginCode').value
+      });
+      if (r.status === 200 && r.body.accessToken) {
+        bearer = r.body.accessToken;
+      }
+      log('loginLog', 'POST /login/2fa/verify', r);
+    }
+
+    async function enable2FaRequest() {
+      if (!bearer) return log('loginLog', 'Login first to get a bearer token.');
+      const r = await call('POST', '/2fa/enable-request');
+      log('loginLog', 'POST /2fa/enable-request', r);
+    }
+
+    async function enable2FaConfirm() {
+      if (!bearer) return log('loginLog', 'Login first to get a bearer token.');
+      const r = await call('POST', '/2fa/enable-confirm', { code: document.getElementById('loginCode').value });
+      log('loginLog', 'POST /2fa/enable-confirm', r);
+    }
+
+    async function disable2Fa() {
+      if (!bearer) return log('loginLog', 'Login first to get a bearer token.');
+      const r = await call('POST', '/2fa/disable', { password: document.getElementById('loginPassword').value });
+      log('loginLog', 'POST /2fa/disable', r);
+    }
+  </script>
+</body>
+</html>

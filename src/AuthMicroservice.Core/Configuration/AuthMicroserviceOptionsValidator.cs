@@ -192,6 +192,26 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             }
         }
 
+        if (options.Otp.CodeLength < 4 || options.Otp.CodeLength > 10)
+        {
+            errors.Add("AuthMicroservice:Otp:CodeLength must be between 4 and 10.");
+        }
+
+        if (options.Otp.ExpirationMinutes <= 0)
+        {
+            errors.Add("AuthMicroservice:Otp:ExpirationMinutes must be > 0.");
+        }
+
+        if (options.Otp.MaxAttempts < 1)
+        {
+            errors.Add("AuthMicroservice:Otp:MaxAttempts must be >= 1.");
+        }
+
+        if (options.Otp.ResendCooldownSeconds < 0)
+        {
+            errors.Add("AuthMicroservice:Otp:ResendCooldownSeconds must be >= 0.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");

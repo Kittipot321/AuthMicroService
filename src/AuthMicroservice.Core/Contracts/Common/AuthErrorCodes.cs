@@ -28,4 +28,12 @@ public static class AuthErrorCodes
     public const string InvalidThaIdCode = "INVALID_THAID_CODE";
     public const string ThaIdReturnUrlNotAllowed = "THAID_RETURN_URL_NOT_ALLOWED";
     public const string InvalidRole = "INVALID_ROLE";
+    public const string TwoFactorRequired = "TWO_FACTOR_REQUIRED";
+    public const string InvalidOtp = "INVALID_OTP";
+    public const string OtpExpired = "OTP_EXPIRED";
+    public const string OtpAttemptsExceeded = "OTP_ATTEMPTS_EXCEEDED";
+    public const string OtpCooldownActive = "OTP_COOLDOWN_ACTIVE";
+    public const string OtpDisabled = "OTP_DISABLED";
+    public const string TwoFactorNotEnabled = "TWOFA_NOT_ENABLED";
+    public const string TwoFactorAlreadyEnabled = "TWOFA_ALREADY_ENABLED";
 }
