@@ -1,16 +1,34 @@
 <!DOCTYPE html>
 <html>
 <body>
-  <div id="g_id_onload"
-       data-client_id="Google_Client_Id"
-       data-callback="onLogin"></div>
-  <div class="g_id_signin" data-type="standard"></div>
-  <script src="https://accounts.google.com/gsi/client" async></script>
+  <button id="loginBtn">Sign in with Google</button>
+  <pre id="out"></pre>
+  <script src="https://accounts.google.com/gsi/client" async defer
+          onerror="document.getElementById('out').textContent='Failed to load Google Identity Services (check network / CSP / file:// blocking)';"></script>
   <script>
-    function onLogin(res) {
-      console.log("id_token:", res.credential);
-      navigator.clipboard.writeText(res.credential);
-    }
+    const CLIENT_ID = "Google_Client_Id";
+    window.addEventListener("load", () => {
+      if (typeof google === "undefined" || !google.accounts || !google.accounts.oauth2) {
+        document.getElementById("out").textContent =
+          "Google Identity Services did not load. Serve via https:// (e.g. `dotnet serve -S`) instead of opening the file directly.";
+        return;
+      }
+      const codeClient = google.accounts.oauth2.initCodeClient({
+        client_id: CLIENT_ID,
+        scope: "openid email profile",
+        ux_mode: "popup",
+        callback: ({ code, error }) => {
+          if (error) {
+            document.getElementById("out").textContent = "Login error: " + error;
+            return;
+          }
+          console.log("code:", code);
+          navigator.clipboard.writeText(code);
+          document.getElementById("out").textContent = code;
+        }
+      });
+      document.getElementById("loginBtn").onclick = () => codeClient.requestCode();
+    });
   </script>
 </body>
 </html>

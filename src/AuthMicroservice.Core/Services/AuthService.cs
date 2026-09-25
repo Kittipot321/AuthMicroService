@@ -29,6 +29,7 @@ internal sealed class AuthService : IAuthService
     private readonly IEmailService _emailService;
     private readonly IOtpService _otpService;
     private readonly IGoogleTokenValidator _googleTokenValidator;
+    private readonly IGoogleOAuthClient _googleOAuthClient;
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IFacebookTokenValidator _facebookTokenValidator;
     private readonly ILineTokenValidator _lineTokenValidator;
@@ -49,6 +50,7 @@ internal sealed class AuthService : IAuthService
         IEmailService emailService,
         IOtpService otpService,
         IGoogleTokenValidator googleTokenValidator,
+        IGoogleOAuthClient googleOAuthClient,
         IMicrosoftTokenValidator microsoftTokenValidator,
         IFacebookTokenValidator facebookTokenValidator,
         ILineTokenValidator lineTokenValidator,
@@ -68,6 +70,7 @@ internal sealed class AuthService : IAuthService
         _emailService = emailService;
         _otpService = otpService;
         _googleTokenValidator = googleTokenValidator;
+        _googleOAuthClient = googleOAuthClient;
         _microsoftTokenValidator = microsoftTokenValidator;
         _facebookTokenValidator = facebookTokenValidator;
         _lineTokenValidator = lineTokenValidator;
@@ -338,12 +341,12 @@ internal sealed class AuthService : IAuthService
         GoogleUserInfo googleUser;
         try
         {
-            googleUser = await _googleTokenValidator.ValidateAsync(request.IdToken, cancellationToken).ConfigureAwait(false);
+            googleUser = await _googleOAuthClient.ExchangeAndFetchUserAsync(request.Code, cancellationToken).ConfigureAwait(false);
         }
-        catch (GoogleTokenValidationException ex)
+        catch (GoogleOAuthException ex)
         {
-            _logger.LogWarning(ex, "Google id_token validation failed.");
-            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidGoogleToken, "Google id_token is invalid.");
+            _logger.LogWarning(ex, "Google authorization-code exchange failed.");
+            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidGoogleToken, "Google authorization code is invalid.");
         }
 
         if (!googleUser.EmailVerified)

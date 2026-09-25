@@ -8,7 +8,7 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
 
 | Provider | Developer Console | Config section | Required keys |
 |---|---|---|---|
-| Google | [console.cloud.google.com](https://console.cloud.google.com) | `Google` | `ClientId` |
+| Google | [console.cloud.google.com](https://console.cloud.google.com) | `Google` | `ClientId`, `ClientSecret` |
 | Microsoft | [portal.azure.com](https://portal.azure.com) → Entra ID | `Microsoft` | `ClientId`, `TenantId` |
 | Facebook | [developers.facebook.com/apps](https://developers.facebook.com/apps) | `Facebook` | `AppId`, `AppSecret` |
 | LINE | [developers.line.biz/console](https://developers.line.biz/console) | `Line` | `ChannelId` (+ `ChannelSecret`, `RedirectUri`, `AllowedReturnUrlPrefixes` ถ้าใช้ OIDC redirect flow) |
@@ -30,8 +30,8 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
    - ใส่ App name, support email, developer contact — บันทึก
 3. **APIs & Services** → **Credentials** → **+ Create Credentials** → **OAuth client ID**
 4. Application type = **Web application**
-5. เพิ่ม **Authorized JavaScript origins** (เช่น `https://localhost:5001`) และ **Authorized redirect URIs** (ถ้าใช้ redirect flow)
-6. กด **Create** → copy **Client ID** (รูปแบบ `xxxxxxx.apps.googleusercontent.com`)
+5. เพิ่ม **Authorized JavaScript origins** (เช่น `https://localhost:5001`) — dev popup flow ใช้ `redirect_uri=postmessage` (hardcoded ที่ backend) ไม่ต้องตั้ง redirect URI ก็ได้; **production** ที่ใช้ full redirect flow ต้องเพิ่ม **Authorized redirect URIs** ให้ตรงกับ URL ที่ backend รับ callback
+6. กด **Create** → copy ทั้ง **Client ID** (`xxxxxxx.apps.googleusercontent.com`) และ **Client secret** (คลิก **Show** หรือ download JSON) — เก็บทั้งคู่ไว้ใช้ที่ backend
 
 ### Where to paste
 
@@ -40,13 +40,17 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
   "ExternalProviders": {
     "Google": {
       "Enabled": true,
-      "ClientId": "xxxxxxx.apps.googleusercontent.com"
+      "ClientId": "xxxxxxx.apps.googleusercontent.com",
+      "ClientSecret": "<client-secret-from-google-console>"
     }
   }
 }
 ```
 
-> **Note**: token-exchange flow ที่ใช้ในโปรเจกต์นี้ **ไม่ต้องใช้ ClientSecret** — frontend เอา `id_token` มาส่งเข้า backend ตรง ๆ
+> **Note**:
+> - v1.3 ใช้ **authorization-code exchange**: frontend ใช้ Google Identity Services **OAuth 2.0 Code Client** (`google.accounts.oauth2.initCodeClient({ ux_mode: 'popup', ... })`) ได้ `authorization_code` แล้ว POST `{ "code": "..." }` เข้า `POST /auth/external/google` — backend แลก code + `ClientSecret` กับ Google เพื่อเอา `id_token` มา validate เอง (ClientSecret **ไม่หลุดไปฝั่ง frontend**)
+> - Dev popup flow ใช้ `redirect_uri=postmessage` (hardcoded — ไม่ต้องตั้งใน config); production ที่ใช้ full redirect flow ต้องเพิ่ม redirect URI ใน Google Cloud Console
+> - Startup validation ตอนนี้เช็คแค่ `ClientId` เท่านั้น — ถ้าลืม `ClientSecret` app จะ start ผ่านแต่ **fail ตอน user login ครั้งแรก** ด้วย 500 (`GoogleOAuthException: Google authorization-code configuration is incomplete`)
 
 ---
 
@@ -109,7 +113,7 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
 ```jsonc
 "Facebook": {
   "Enabled": true,
-  "AppId": "1757562765571027",
+  "AppId": "<app-id>",
   "AppSecret": "<app-secret>",
   "GraphApiVersion": "v18.0"
 }
@@ -155,7 +159,7 @@ LINE รองรับ **2 flows** — เลือกใช้ตาม client
 ```jsonc
 "Line": {
   "Enabled": true,
-  "ChannelId": "2011682506",
+  "ChannelId": "<channel-id-from-line-console>",
   "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify"
 }
 ```
@@ -165,7 +169,7 @@ LINE รองรับ **2 flows** — เลือกใช้ตาม client
 ```jsonc
 "Line": {
   "Enabled": true,
-  "ChannelId": "2011682506",
+  "ChannelId": "<channel-id-from-line-console>",
   "ChannelSecret": "<channel-secret-from-line-console>",
   "Authority": "https://access.line.me",
   "TokenEndpoint": "https://api.line.me/oauth2/v2.1/token",

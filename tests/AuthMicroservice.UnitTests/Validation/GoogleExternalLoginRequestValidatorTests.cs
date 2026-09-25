@@ -9,35 +9,35 @@ public class GoogleExternalLoginRequestValidatorTests
     private static GoogleExternalLoginRequestValidator BuildValidator() => new();
 
     [Fact]
-    public async Task Empty_IdToken_Fails()
+    public async Task Empty_Code_Fails()
     {
         var v = BuildValidator();
-        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { IdToken = string.Empty });
+        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { Code = string.Empty });
         result.IsValid.Should().BeFalse();
-        result.Errors.Should().Contain(e => e.PropertyName == nameof(GoogleExternalLoginRequest.IdToken));
+        result.Errors.Should().Contain(e => e.PropertyName == nameof(GoogleExternalLoginRequest.Code));
     }
 
     [Fact]
-    public async Task Whitespace_IdToken_Fails()
+    public async Task Whitespace_Code_Fails()
     {
         var v = BuildValidator();
-        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { IdToken = "   " });
+        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { Code = "   " });
         result.IsValid.Should().BeFalse();
     }
 
     [Fact]
-    public async Task Non_Empty_IdToken_Passes()
+    public async Task Non_Empty_Code_Passes()
     {
         var v = BuildValidator();
-        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { IdToken = "eyJhbGciOi..." });
+        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { Code = "4/0AbCdEfGhIjKlMnOpQrStUvWxYz" });
         result.IsValid.Should().BeTrue();
     }
 
     [Fact]
-    public async Task Overlong_IdToken_Fails()
+    public async Task Overlong_Code_Fails()
     {
         var v = BuildValidator();
-        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { IdToken = new string('x', 8193) });
+        var result = await v.ValidateAsync(new GoogleExternalLoginRequest { Code = new string('x', 2049) });
         result.IsValid.Should().BeFalse();
     }
 }

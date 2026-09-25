@@ -11,7 +11,7 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 {
     public FakeEmailSender EmailSender { get; } = new();
 
-    public FakeGoogleTokenValidator GoogleTokenValidator { get; } = new();
+    public FakeGoogleOAuthClient GoogleOAuthClient { get; } = new();
 
     public FakeMicrosoftTokenValidator MicrosoftTokenValidator { get; } = new();
 
@@ -41,8 +41,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
             services.RemoveAll<IEmailSender>();
             services.AddSingleton<IEmailSender>(EmailSender);
 
-            services.RemoveAll<IGoogleTokenValidator>();
-            services.AddSingleton<IGoogleTokenValidator>(GoogleTokenValidator);
+            services.RemoveAll<IGoogleOAuthClient>();
+            services.AddSingleton<IGoogleOAuthClient>(GoogleOAuthClient);
 
             services.RemoveAll<IMicrosoftTokenValidator>();
             services.AddSingleton<IMicrosoftTokenValidator>(MicrosoftTokenValidator);

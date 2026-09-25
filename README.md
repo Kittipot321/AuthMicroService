@@ -75,7 +75,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/change-password` | auth | Requires current password |
 | GET | `/auth/me` | auth | User profile with roles + claims |
 | GET | `/auth/health` | anon | Liveness |
-| POST | `/auth/external/google` | anon | Google `id_token` → JWT (auto-provision + auto-link). 404 unless `ExternalProviders:Google:Enabled=true` |
+| POST | `/auth/external/google` | anon | Google `authorization_code` → JWT (backend แลก code เอา `id_token` ต่อกับ Google, auto-provision + auto-link). 404 unless `ExternalProviders:Google:Enabled=true` |
 | POST | `/auth/external/microsoft` | anon | Microsoft `id_token` (Azure AD / MSA) → JWT. 404 unless `ExternalProviders:Microsoft:Enabled=true` |
 | POST | `/auth/external/facebook` | anon | Facebook `access_token` → JWT. 404 unless `ExternalProviders:Facebook:Enabled=true` |
 | POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
@@ -332,7 +332,7 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "PasswordResetBaseUrl": "https://app.example.com/reset-password"
     },
     "ExternalProviders": {
-      "Google":    { "Enabled": false, "ClientId": "" },
+      "Google":    { "Enabled": false, "ClientId": "", "ClientSecret": "" },  // ClientSecret required for authorization-code exchange
       "Microsoft": { "Enabled": false, "ClientId": "", "TenantId": "common" },
       "Facebook":  { "Enabled": false, "AppId": "", "AppSecret": "", "GraphApiVersion": "v18.0" },
       "Line":      {
@@ -430,15 +430,16 @@ Ready-to-run browser test harnesses (grab a real token from the provider and POS
 
 ### Google
 
-- **Endpoint**: `POST /auth/external/google` — body `{ "idToken": "..." }`
-- **Config**: `AuthMicroservice:ExternalProviders:Google:{ Enabled, ClientId }`
-- **Validation**: Google JWKS — signature, `aud` = `ClientId`, `exp`
+- **Endpoint**: `POST /auth/external/google` — body `{ "code": "..." }` (authorization code from Google Identity Services **OAuth 2.0 Code Client**)
+- **Config**: `AuthMicroservice:ExternalProviders:Google:{ Enabled, ClientId, ClientSecret }`
+- **Validation**: **authorization-code exchange** — backend POST `code` + `ClientId` + `ClientSecret` ไปที่ `https://oauth2.googleapis.com/token` (redirect_uri = `postmessage` สำหรับ popup flow) เพื่อแลก `id_token` แล้ว validate signature/`aud` = `ClientId`/`exp` ผ่าน Google JWKS
 - **Provider quirks**: rejects with `GOOGLE_EMAIL_NOT_VERIFIED` (400) if Google's `email_verified` claim is false
-- **Errors**: `INVALID_GOOGLE_TOKEN` (401), `GOOGLE_EMAIL_NOT_VERIFIED` (400), `GOOGLE_LOGIN_DISABLED` (404)
+- **Errors**: `INVALID_GOOGLE_TOKEN` (401 — code exchange fail หรือ id_token invalid), `GOOGLE_EMAIL_NOT_VERIFIED` (400), `GOOGLE_LOGIN_DISABLED` (404)
 
 ```powershell
 $env:AuthMicroservice__ExternalProviders__Google__Enabled = "true"
 $env:AuthMicroservice__ExternalProviders__Google__ClientId = "<your>.apps.googleusercontent.com"
+$env:AuthMicroservice__ExternalProviders__Google__ClientSecret = "<google-client-secret>"
 ```
 
 ### Microsoft
@@ -535,10 +536,17 @@ $env:AuthMicroservice__ExternalProviders__ThaId__RedirectUri = "https://localhos
 
 ### Sample request
 
-Same shape for the four token-exchange providers — only the path and the token field name differ (`idToken` for Google/Microsoft/LINE, `accessToken` for Facebook):
+คล้ายกันทั้ง 4 provider — ต่างกันแค่ path และ field name: **Microsoft/LINE** ใช้ `idToken`, **Facebook** ใช้ `accessToken`, **Google** ใช้ `code` (authorization code — backend แลก `id_token` ต่อกับ Google เอง):
 
 ```http
 POST /auth/external/google
+Content-Type: application/json
+
+{ "code": "4/0Ab_5qll..." }
+```
+
+```http
+POST /auth/external/microsoft
 Content-Type: application/json
 
 { "idToken": "eyJhbGciOi..." }

@@ -7,8 +7,8 @@ public sealed class GoogleExternalLoginRequestValidator : AbstractValidator<Goog
 {
     public GoogleExternalLoginRequestValidator()
     {
-        RuleFor(x => x.IdToken)
+        RuleFor(x => x.Code)
             .NotEmpty()
-            .MaximumLength(8192);
+            .MaximumLength(2048);
     }
 }

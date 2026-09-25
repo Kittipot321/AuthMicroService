@@ -23,16 +23,16 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
     {
         var client = _factory.CreateClient();
         var email = $"google-new-{Guid.NewGuid():N}@example.com";
-        var idToken = $"fake-token-{Guid.NewGuid():N}";
+        var code = $"fake-code-{Guid.NewGuid():N}";
 
-        _factory.GoogleTokenValidator.RegisterToken(idToken, new GoogleUserInfo(
+        _factory.GoogleOAuthClient.RegisterCode(code, new GoogleUserInfo(
             Subject: $"google-sub-{Guid.NewGuid():N}",
             Email: email,
             EmailVerified: true,
             Name: "Google User",
             PictureUrl: "https://example.com/pic.png"));
 
-        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         var body = await response.Content.ReadFromJsonAsync<AuthResponse>();
@@ -50,16 +50,16 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
         var client = _factory.CreateClient();
         var email = $"google-reuse-{Guid.NewGuid():N}@example.com";
         var subject = $"google-sub-{Guid.NewGuid():N}";
-        var idToken = $"fake-token-{Guid.NewGuid():N}";
+        var code = $"fake-code-{Guid.NewGuid():N}";
 
-        _factory.GoogleTokenValidator.RegisterToken(idToken, new GoogleUserInfo(
+        _factory.GoogleOAuthClient.RegisterCode(code, new GoogleUserInfo(
             Subject: subject, Email: email, EmailVerified: true, Name: "Google User", PictureUrl: null));
 
-        var first = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var first = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
         first.StatusCode.Should().Be(HttpStatusCode.OK);
         var firstBody = await first.Content.ReadFromJsonAsync<AuthResponse>();
 
-        var second = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var second = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
         second.StatusCode.Should().Be(HttpStatusCode.OK);
         var secondBody = await second.Content.ReadFromJsonAsync<AuthResponse>();
 
@@ -70,39 +70,39 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
     public async Task EmailNotVerified_ByGoogle_Returns400()
     {
         var client = _factory.CreateClient();
-        var idToken = $"fake-token-{Guid.NewGuid():N}";
+        var code = $"fake-code-{Guid.NewGuid():N}";
 
-        _factory.GoogleTokenValidator.RegisterToken(idToken, new GoogleUserInfo(
+        _factory.GoogleOAuthClient.RegisterCode(code, new GoogleUserInfo(
             Subject: $"sub-{Guid.NewGuid():N}",
             Email: $"unverified-{Guid.NewGuid():N}@example.com",
             EmailVerified: false,
             Name: null,
             PictureUrl: null));
 
-        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
 
     [Fact]
-    public async Task InvalidIdToken_Returns401()
+    public async Task InvalidCode_Returns401()
     {
         var client = _factory.CreateClient();
-        var idToken = $"bad-token-{Guid.NewGuid():N}";
+        var code = $"bad-code-{Guid.NewGuid():N}";
 
-        _factory.GoogleTokenValidator.RegisterFailure(idToken, "signature verification failed");
+        _factory.GoogleOAuthClient.RegisterFailure(code, "code exchange failed");
 
-        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
 
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
     [Fact]
-    public async Task EmptyIdToken_Returns400_Validation()
+    public async Task EmptyCode_Returns400_Validation()
     {
         var client = _factory.CreateClient();
 
-        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = string.Empty });
+        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = string.Empty });
 
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
     }
@@ -128,15 +128,15 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
         // freshly generated token via UserManager (accessed through the API's DI).
         await ConfirmEmailAsync(email);
 
-        var idToken = $"link-token-{Guid.NewGuid():N}";
-        _factory.GoogleTokenValidator.RegisterToken(idToken, new GoogleUserInfo(
+        var code = $"link-code-{Guid.NewGuid():N}";
+        _factory.GoogleOAuthClient.RegisterCode(code, new GoogleUserInfo(
             Subject: $"google-{Guid.NewGuid():N}",
             Email: email,
             EmailVerified: true,
             Name: "Google Name",
             PictureUrl: null));
 
-        var googleLogin = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var googleLogin = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
         googleLogin.StatusCode.Should().Be(HttpStatusCode.OK);
         var linked = await googleLogin.Content.ReadFromJsonAsync<AuthResponse>();
         linked!.User.Id.Should().Be(registered!.User.Id);
@@ -156,15 +156,15 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
         });
         register.StatusCode.Should().Be(HttpStatusCode.Created);
 
-        var idToken = $"link-token-{Guid.NewGuid():N}";
-        _factory.GoogleTokenValidator.RegisterToken(idToken, new GoogleUserInfo(
+        var code = $"link-code-{Guid.NewGuid():N}";
+        _factory.GoogleOAuthClient.RegisterCode(code, new GoogleUserInfo(
             Subject: $"google-{Guid.NewGuid():N}",
             Email: email,
             EmailVerified: true,
             Name: null,
             PictureUrl: null));
 
-        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { IdToken = idToken });
+        var response = await client.PostAsJsonAsync("/auth/external/google", new GoogleExternalLoginRequest { Code = code });
 
         response.StatusCode.Should().Be(HttpStatusCode.Conflict);
     }
