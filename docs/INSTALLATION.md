@@ -121,7 +121,7 @@ Minimum viable config (SQLite, ไม่ใช้ email) — paste ทั้ง�
 }
 ```
 
-**Full schema** (JWT lifetime, Identity password rules, lockout, SMTP, external providers): [README — Configuration reference](../README.md#configuration-reference)
+**Full schema** (JWT lifetime, Identity password rules, lockout, SMTP, external providers): [docs/CONFIGURATION.md](CONFIGURATION.md)
 
 **Startup fail-fast checks** (อ้างอิง [AuthMicroserviceOptionsValidator.cs](../src/AuthMicroservice.Core/Configuration/AuthMicroserviceOptionsValidator.cs)):
 
@@ -277,7 +277,7 @@ Provider ที่รองรับ + credentials ที่ต้องมี:
 
 **วิธีขอ credentials จาก Developer Console ของแต่ละ provider** (step-by-step): [docs/PROVIDER_SETUP.md](PROVIDER_SETUP.md)
 
-**ทดสอบ provider จริงในเบราว์เซอร์**: `test-html/test-{google,microsoft,facebook,line,thaid}.html` — ดู [README — Running the browser test harnesses over HTTPS](../README.md#running-the-browser-test-harnesses-over-https)
+**ทดสอบ provider จริงในเบราว์เซอร์**: `test-html/test-{google,microsoft,facebook,line,thaid}.html` — ดู [docs/EXTERNAL_PROVIDERS.md — Running the browser test harnesses over HTTPS](EXTERNAL_PROVIDERS.md#running-the-browser-test-harnesses-over-https)
 
 ---
 

@@ -1,6 +1,6 @@
 # Provider Setup Guide
 
-ไฟล์นี้บอก **วิธีขอ credentials จาก Developer Console ของแต่ละ provider** — สำหรับ config schema, endpoint, และ error codes ดูที่ [../README.md](../README.md) section *External login providers*.
+ไฟล์นี้บอก **วิธีขอ credentials จาก Developer Console ของแต่ละ provider** — สำหรับ config schema, endpoint, และ error codes ดูที่ [EXTERNAL_PROVIDERS.md](EXTERNAL_PROVIDERS.md).
 
 Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProviders:<Provider>` ใน [src/AuthMicroservice.Api/appsettings.json](../src/AuthMicroservice.Api/appsettings.json) และ override ผ่าน env var ได้ (double-underscore syntax เช่น `AuthMicroservice__ExternalProviders__Google__ClientId`).
 

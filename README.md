@@ -11,6 +11,8 @@ Reusable authentication component for ASP.NET Core 8 — usable **both** as a pl
 - Account lockout after N failed attempts
 - Roles + custom claims (ASP.NET Core Identity underneath) — seed custom roles จาก config, สมัครใน role เฉพาะผ่าน `POST /auth/register` ได้ (ต้องอยู่ใน `AllowedSelfRegisterRoles`)
 - Provider-agnostic EF Core — pick **SqlServer / Postgres / Sqlite / InMemory** in `appsettings.json`
+- Email OTP + login 2FA — ดู [docs/OTP_2FA.md](docs/OTP_2FA.md)
+- External login: Google / Microsoft / Facebook / LINE / ThaID — ดู [docs/EXTERNAL_PROVIDERS.md](docs/EXTERNAL_PROVIDERS.md)
 - All config from `appsettings.json` / env vars — no hardcoded secrets
 - Swagger UI, Dockerfile + docker-compose (with Mailhog), sample consumer, unit + integration tests
 
@@ -162,214 +164,26 @@ curl -X POST http://localhost:8080/auth/forgot-password -H "Content-Type: applic
 1..5 | ForEach-Object { curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d (@{ email="alice@example.com"; password="wrong" } | ConvertTo-Json) }
 ```
 
-## OTP / 2FA flow
+## OTP / 2FA
 
-Feature v1.3 เพิ่ม email-based OTP สำหรับ **email verification** (ทดแทน / เสริม link ใน email) และสำหรับ **login two-factor** (สองขั้นตอนเมื่อ user เปิด 2FA)
+Email-based OTP รองรับ 2 flows — **email verification** (ทดแทน/เสริม verify-email link) และ **login two-factor** (ส่ง OTP หลัง password ผ่าน สำหรับ user ที่เปิด 2FA). ครบทั้ง flow diagram, PowerShell examples, endpoint toggle table และ config knobs ที่ [docs/OTP_2FA.md](docs/OTP_2FA.md)
 
-### Login 2FA — 2-step flow
+## Configuration
 
-เมื่อ user เปิด 2FA แล้ว `POST /auth/login` จะไม่ return tokens ทันที แต่จะตอบ `202 Accepted` + ส่ง OTP ไปยัง email ก่อน จากนั้น client ต้องเรียก `/auth/login/2fa/verify` เพื่อแลก tokens
-
-```
-┌──────┐                     ┌────────┐                ┌─────────┐
-│Client│                     │  API   │                │  Email  │
-└───┬──┘                     └───┬────┘                └────┬────┘
-    │  POST /auth/login          │                          │
-    │  {email, password}         │                          │
-    │───────────────────────────>│                          │
-    │                            │  send OTP (6 digits)     │
-    │                            │─────────────────────────>│
-    │  202 Accepted              │                          │
-    │  { email, expiresAt,       │                          │
-    │    message }               │                          │
-    │<───────────────────────────│                          │
-    │                                                       │
-    │  (user opens inbox, reads code)                       │
-    │                                                       │
-    │  POST /auth/login/2fa/verify                          │
-    │  {email, code}             │                          │
-    │───────────────────────────>│                          │
-    │  200 OK                    │                          │
-    │  { accessToken,            │                          │
-    │    refreshToken, user }    │                          │
-    │<───────────────────────────│                          │
-```
-
-> **Resend**: ถ้า user ไม่ได้รับ email (หรือ code หมดอายุ) client เรียก `POST /auth/login/2fa/resend {email}` เพื่อขอ code ใหม่ — silent success ทุกกรณี (กัน enumeration) และ respect `ResendCooldownSeconds` — ถ้ายิงถี่เกินได้ 429 `OTP_COOLDOWN_ACTIVE`
-
-**Full example (PowerShell):**
-
-```powershell
-# 1. Register (2FA disabled by default)
-$reg = @{ email="bob@example.com"; password="P@ssw0rd!" } | ConvertTo-Json
-$tokens = curl -X POST http://localhost:8080/auth/register -H "Content-Type: application/json" -d $reg | ConvertFrom-Json
-
-# 2. Enable 2FA (requires bearer token from register/login)
-$headers = @{ Authorization = "Bearer $($tokens.accessToken)" }
-curl -X POST http://localhost:8080/auth/2fa/enable-request -H @headers
-# → grab OTP from Mailhog (http://localhost:8025)
-$confirm = @{ code="123456" } | ConvertTo-Json
-curl -X POST http://localhost:8080/auth/2fa/enable-confirm -H @headers -H "Content-Type: application/json" -d $confirm
-
-# 3. Login now returns 202 + sends OTP
-$login = @{ email="bob@example.com"; password="P@ssw0rd!" } | ConvertTo-Json
-$pending = curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d $login
-# → status 202 { email, expiresAt, message: "Two-factor verification required." }
-
-# 4. Verify OTP → get tokens
-$verify = @{ email="bob@example.com"; code="654321" } | ConvertTo-Json
-$auth = curl -X POST http://localhost:8080/auth/login/2fa/verify -H "Content-Type: application/json" -d $verify | ConvertFrom-Json
-```
-
-### Email verification via OTP (alternative to link)
-
-`/auth/otp/email/send` + `/auth/otp/email/verify` เป็นทางเลือกของ `/auth/verify-email` (ลิงก์) เหมาะสำหรับ mobile apps / SPA ที่ไม่อยากจัดการ deep link
-
-```powershell
-# 1. After register (unverified user)
-$send = @{ email="carol@example.com" } | ConvertTo-Json
-curl -X POST http://localhost:8080/auth/otp/email/send -H "Content-Type: application/json" -d $send
-# → 200 OK silent success ทุกกรณี (ป้องกัน enumeration) แต่จะส่ง email เฉพาะกรณีที่ user มีจริงและยังไม่ verified
-
-# 2. User กรอก code จาก email
-$verify = @{ email="carol@example.com"; code="123456" } | ConvertTo-Json
-curl -X POST http://localhost:8080/auth/otp/email/verify -H "Content-Type: application/json" -d $verify
-# → 200 OK { "message": "Email verified." }
-# → 401 INVALID_OTP / OTP_EXPIRED / OTP_ATTEMPTS_EXCEEDED
-# → 429 OTP_COOLDOWN_ACTIVE (ถ้ายิง /send ถี่เกินไป)
-# → 409 EMAIL_ALREADY_VERIFIED (verify แล้ว — client ควรข้ามขั้นตอนนี้)
-```
-
-### Endpoint toggles
-
-ทุก OTP/2FA endpoint สามารถเปิด/ปิด ได้อิสระผ่าน `AuthMicroservice:Endpoints` (คืน 404 ตอน routing ถ้าปิด) หรือผ่าน `AuthMicroservice:Otp` (คืน 404 `OTP_DISABLED` ที่ handler ถ้าปิด purpose นั้นๆ ทั้ง feature)
-
-| Setting | Default | ผล |
-|---|---|---|
-| `Endpoints:SendEmailVerificationOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/send` ไม่ถูก map (404) |
-| `Endpoints:VerifyEmailOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/verify` ไม่ถูก map |
-| `Endpoints:LoginTwoFactorVerify.Enabled` | `true` | ปิด → route `/auth/login/2fa/verify` ไม่ถูก map |
-| `Endpoints:LoginTwoFactorResend.Enabled` | `true` | ปิด → route `/auth/login/2fa/resend` ไม่ถูก map |
-| `Endpoints:ExternalLineChallenge.{Enabled,ShowInSwagger}` | `true` / `true` | ปิด `Enabled` → route `/auth/external/challenge/line` ไม่ถูก map. ปิด `ShowInSwagger` → route ยังทำงาน แต่ถูก `ExcludeFromDescription` (แนะนำสำหรับ browser-redirect endpoint) |
-| `Endpoints:ExternalLineCallback.{Enabled,ShowInSwagger}` | `true` / `true` | เหมือน `ExternalLineChallenge` แต่สำหรับ `/auth/external/callback/line` |
-| `Endpoints:TwoFactorEnableRequest.Enabled` | `true` | ปิด → route `/auth/2fa/enable-request` ไม่ถูก map |
-| `Endpoints:TwoFactorEnableConfirm.Enabled` | `true` | ปิด → route `/auth/2fa/enable-confirm` ไม่ถูก map |
-| `Endpoints:TwoFactorDisable.Enabled` | `true` | ปิด → route `/auth/2fa/disable` ไม่ถูก map |
-| `Otp:EmailVerification.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` (route ยังอยู่) |
-| `Otp:LoginTwoFactor.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` — user ที่มี `TwoFactorEnabled=true` login ไม่ผ่าน 2FA แล้ว ระวังก่อนปิด |
-
-### Configuration knobs
-
-```json
-"Otp": {
-  "CodeLength": 6,               // 4-10
-  "ExpirationMinutes": 10,       // > 0
-  "MaxAttempts": 5,              // ก่อน mark consumed + คืน OTP_ATTEMPTS_EXCEEDED
-  "ResendCooldownSeconds": 60,   // ก่อนขอ code ใหม่ได้ — คืน 429 OTP_COOLDOWN_ACTIVE
-  "EmailVerification": { "Enabled": true },
-  "LoginTwoFactor":    { "Enabled": true }
-}
-```
-
-Browser test harness: [`test-html/test-otp.html`](test-html/test-otp.html) — เปิดใน browser หลัง `dotnet run` เพื่อทดสอบ flow ทั้งหมดโดยไม่ต้องเขียน curl
-
-## Configuration reference
-
-The `AuthMicroservice` config section (bind from any `IConfiguration`):
+Config เต็ม + startup validation rules อยู่ที่ [docs/CONFIGURATION.md](docs/CONFIGURATION.md). Minimum viable config:
 
 ```jsonc
 {
   "AuthMicroservice": {
-    "Database": {
-      "Provider": "SqlServer",       // SqlServer | Postgres | Sqlite | InMemory
-      "ConnectionString": "...",
-      "AutoMigrate": true,
-      "SeedDefaults": true             // seeds Admin + User roles
-    },
-    "Jwt": {
-      "Issuer": "AuthMicroservice",
-      "Audience": "AuthMicroservice.Clients",
-      "Key": "REPLACE_FROM_ENV_MIN_32_CHARS",
-      "AccessTokenLifetimeMinutes": 15,
-      "RefreshTokenLifetimeDays": 7,
-      "ClockSkewSeconds": 30
-    },
-    "Email": {
-      "Enabled": true,
-      "FromAddress": "no-reply@example.com",
-      "FromName": "Auth Service",
-      "Smtp": { "Host": "localhost", "Port": 1025, "UseStartTls": false, "UseSsl": false, "Username": "", "Password": "" },
-      "Templates": {
-        "VerifyEmailSubject": "Verify your email",
-        "PasswordResetSubject": "Reset your password",
-        "OtpEmailVerificationSubject": "Your verification code",
-        "OtpLoginTwoFactorSubject": "Your login code"
-      }
-    },
-    "Otp": {
-      "CodeLength": 6,                       // 4–10 digits
-      "ExpirationMinutes": 10,
-      "MaxAttempts": 5,                      // per code, before it's invalidated
-      "ResendCooldownSeconds": 60,           // between successive generate calls for same user+purpose
-      "EmailVerification": { "Enabled": true },
-      "LoginTwoFactor":    { "Enabled": true }
-    },
-    "Identity": {
-      "Password": { "RequiredLength": 8, "RequireDigit": true, "RequireLowercase": true, "RequireUppercase": true, "RequireNonAlphanumeric": true, "RequiredUniqueChars": 1 },
-      "Lockout":  { "AllowedForNewUsers": true, "MaxFailedAccessAttempts": 5, "DefaultLockoutMinutes": 15 },
-      "SignIn":   { "RequireConfirmedEmail": true, "RequireConfirmedPhoneNumber": false },
-      "User":     { "RequireUniqueEmail": true },
-      "Roles": {
-        "DefaultRegistrationRole": "User",              // role ที่ assign ให้ user ใหม่เมื่อ register ไม่ส่ง `role` field
-        "AllowedSelfRegisterRoles": [ ],                // whitelist role ที่ client ขอผ่าน POST /auth/register ได้ (นอกเหนือ default)
-        "AdditionalRoles": [                            // seed custom roles เพิ่มจาก system roles (Admin, User)
-          // { "Name": "Moderator", "Description": "Can moderate user content" }
-        ]
-      }
-    },
-    "TokenLinks": {
-      "EmailVerificationBaseUrl": "https://app.example.com/verify-email",
-      "PasswordResetBaseUrl": "https://app.example.com/reset-password"
-    },
-    "ExternalProviders": {
-      "Google":    { "Enabled": false, "ClientId": "", "ClientSecret": "" },  // ClientSecret required for authorization-code exchange
-      "Microsoft": { "Enabled": false, "ClientId": "", "TenantId": "common" },
-      "Facebook":  { "Enabled": false, "AppId": "", "AppSecret": "", "GraphApiVersion": "v18.0" },
-      "Line":      {
-        "Enabled": false,
-        "ChannelId": "",                                                    // LINE Login channel ID — token-exchange flow ใช้เป็น aud
-        "ChannelSecret": "",                                                // ตั้งค่า = เปิด OIDC redirect flow (challenge/callback endpoints)
-        "Authority": "https://access.line.me",                              // LINE authorize base URL
-        "TokenEndpoint": "https://api.line.me/oauth2/v2.1/token",
-        "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify",         // ใช้กับ LIFF token-exchange
-        "RedirectUri": "",                                                  // required เมื่อ ChannelSecret ตั้งค่า — ต้องตรงกับที่ลงทะเบียนใน LINE console
-        "AllowedReturnUrlPrefixes": [ ],                                    // whitelist ของ frontend returnUrl (open-redirect guard) — required เมื่อ ChannelSecret ตั้งค่า
-        "Scopes": "openid profile email",
-        "StateLifetimeMinutes": 10
-      },
-      "ThaId":     {
-        "Enabled": false,
-        "ClientId": "", "ClientSecret": "",
-        "Authority": "https://imauthtestc.bora.dopa.go.th/api/v2/oauth2",   // sandbox default; prod = https://imauth.bora.dopa.go.th/api/v2/oauth2
-        "RedirectUri": "https://localhost:5100/auth/external/thaid/callback",
-        "AllowedReturnUrlPrefixes": [ "http://localhost:5173", "https://localhost:5100" ],
-        "Scopes": "openid pid given_name family_name email birthdate address",
-        "StateLifetimeMinutes": 10
-      }
-    },
-    "RoutePrefix": "/auth",
-    "EnableSwagger": true
+    "Database": { "Provider": "SqlServer", "ConnectionString": "..." },
+    "Jwt":      { "Key": "REPLACE_FROM_ENV_MIN_32_CHARS" },
+    "Email":    { "Enabled": true, "FromAddress": "no-reply@example.com",
+                  "Smtp": { "Host": "localhost", "Port": 1025 } }
   }
 }
 ```
 
-Secrets are typically supplied via env vars using double-underscore syntax:
-
-- `AuthMicroservice__Jwt__Key`
-- `AuthMicroservice__Database__ConnectionString`
-- `AuthMicroservice__Email__Smtp__Password`
-
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId` (และถ้า `ChannelSecret` ตั้งค่าเพื่อเปิด OIDC redirect flow ต้องมี `RedirectUri` + `AllowedReturnUrlPrefixes` ≥ 1 entry ด้วย), ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`. `Identity.Roles` ก็ถูก validate — `AdditionalRoles[].Name` ห้ามว่าง / เกิน 256 chars / ชนกับ system role (`Admin`/`User`) / ซ้ำกัน, และ `DefaultRegistrationRole` + ทุก entry ใน `AllowedSelfRegisterRoles` ต้องอ้างถึง role ที่มีอยู่จริง (system หรือ `AdditionalRoles`).
+Secrets ใช้ env var แบบ double-underscore (`AuthMicroservice__Jwt__Key`, `AuthMicroservice__Database__ConnectionString`, `AuthMicroservice__Email__Smtp__Password`) — อย่า commit secret ลง `appsettings.json`
 
 ## Custom roles + assignable role at register
 
@@ -411,160 +225,18 @@ Content-Type: application/json
 
 ## External login providers
 
-Five providers are supported: **Google**, **Microsoft**, **Facebook**, **LINE**, and **ThaID** (Thai national digital ID). The first four use a **token-exchange** flow — client (SPA / mobile) obtains a provider token via the native SDK, POSTs it to this service, and gets back this service's own JWT + refresh token (no cookie/redirect handshake). **ThaID always uses the classic OIDC redirect flow** (server-hosted `/challenge` + `/callback`) because DOPA mandates it. **LINE supports both** — LIFF/token-exchange (default), and OIDC redirect (activated when `Line.ChannelSecret` is set) — so you can pick whichever fits your client (LIFF app vs. web SPA).
+รองรับ 5 providers ผ่าน 2 patterns:
 
-> **จะเอาคีย์แต่ละ provider มาจากไหน?** ดู [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) — step-by-step guide ตั้งแต่สมัคร Developer Console ของ Google / Microsoft / Facebook / LINE / DOPA จนได้ credentials มาวางใน `appsettings.json`
+| Provider | Endpoint | Flow |
+|---|---|---|
+| Google | `POST /auth/external/google` | authorization-code exchange (backend ถือ `ClientSecret`) |
+| Microsoft | `POST /auth/external/microsoft` | id_token exchange (OIDC metadata) |
+| Facebook | `POST /auth/external/facebook` | access_token + Graph `debug_token` |
+| LINE (Mode A) | `POST /auth/external/line` | LIFF id_token exchange |
+| LINE (Mode B) | `GET /auth/external/challenge/line` + `/callback/line` | OIDC redirect (เปิดโดยตั้ง `ChannelSecret`) |
+| ThaID | `GET /auth/external/thaid/challenge` + `/callback` | OIDC redirect (server-hosted PKCE — DOPA บังคับ) |
 
-### Shared behaviour (all providers)
-
-1. Validates the incoming token with the provider (signature/audience/expiry, or provider debug endpoint for opaque tokens).
-2. If a link already exists in `AspNetUserLogins` for `(Provider, subject)` → issues tokens.
-3. Else if a local user with the same email exists:
-   - `EmailConfirmed=true` → auto-links the external identity and issues tokens.
-   - `EmailConfirmed=false` → returns `EMAIL_EXISTS_UNVERIFIED` (409). Verify the local account first (via `/auth/verify-email`) before retrying, to prevent account takeover through unverified addresses.
-4. Else → auto-provisions a new `ApplicationUser` with `EmailConfirmed=true`, assigns the `User` role, links the external identity, and issues tokens.
-
-Every provider is **disabled by default** in [appsettings.json](src/AuthMicroservice.Api/appsettings.json) — a disabled endpoint responds 404 (`{PROVIDER}_LOGIN_DISABLED`). Startup fail-fast if `Enabled=true` without required credentials.
-
-Ready-to-run browser test harnesses (grab a real token from the provider and POST it — or, for ThaID, kick off the redirect flow) sit under `test-html/`: [test-html/test-google.html](test-html/test-google.html), [test-html/test-microsoft.html](test-html/test-microsoft.html), [test-html/test-facebook.html](test-html/test-facebook.html), [test-html/test-line.html](test-html/test-line.html), [test-html/test-thaid.html](test-html/test-thaid.html).
-
-### Google
-
-- **Endpoint**: `POST /auth/external/google` — body `{ "code": "..." }` (authorization code from Google Identity Services **OAuth 2.0 Code Client**)
-- **Config**: `AuthMicroservice:ExternalProviders:Google:{ Enabled, ClientId, ClientSecret }`
-- **Validation**: **authorization-code exchange** — backend POST `code` + `ClientId` + `ClientSecret` ไปที่ `https://oauth2.googleapis.com/token` (redirect_uri = `postmessage` สำหรับ popup flow) เพื่อแลก `id_token` แล้ว validate signature/`aud` = `ClientId`/`exp` ผ่าน Google JWKS
-- **Provider quirks**: rejects with `GOOGLE_EMAIL_NOT_VERIFIED` (400) if Google's `email_verified` claim is false
-- **Errors**: `INVALID_GOOGLE_TOKEN` (401 — code exchange fail หรือ id_token invalid), `GOOGLE_EMAIL_NOT_VERIFIED` (400), `GOOGLE_LOGIN_DISABLED` (404)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__Google__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__Google__ClientId = "<your>.apps.googleusercontent.com"
-$env:AuthMicroservice__ExternalProviders__Google__ClientSecret = "<google-client-secret>"
-```
-
-### Microsoft
-
-- **Endpoint**: `POST /auth/external/microsoft` — body `{ "idToken": "..." }`
-- **Config**: `AuthMicroservice:ExternalProviders:Microsoft:{ Enabled, ClientId, TenantId }` — `TenantId` accepts `common` / `organizations` / `consumers` / a specific tenant GUID (default `common`)
-- **Validation**: OpenID Connect metadata (`Microsoft.IdentityModel.Protocols.OpenIdConnect`) — signature, `aud` = `ClientId`, `iss` matches the resolved tenant, `exp`
-- **Provider quirks**: Microsoft-issued email is treated as verified by default; no separate email-verification step
-- **Errors**: `INVALID_MICROSOFT_TOKEN` (401), `MICROSOFT_LOGIN_DISABLED` (404)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__Microsoft__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__Microsoft__ClientId = "<app-registration-guid>"
-$env:AuthMicroservice__ExternalProviders__Microsoft__TenantId = "common"
-```
-
-### Facebook
-
-- **Endpoint**: `POST /auth/external/facebook` — body `{ "accessToken": "..." }`
-- **Config**: `AuthMicroservice:ExternalProviders:Facebook:{ Enabled, AppId, AppSecret, GraphApiVersion }` (default `GraphApiVersion` = `v18.0`)
-- **Validation**: Graph `debug_token` (asserts token was issued to `AppId` and not expired) → then `GET /{version}/me?fields=id,email,name,picture` via `IHttpClientFactory`
-- **Provider quirks**: email is an optional scope — if the user did not grant it (or their Facebook account has no email), returns `FACEBOOK_EMAIL_REQUIRED` (400). Facebook does not report a verified-email flag; auto-provisioned users are marked `EmailConfirmed=true` on the trust that Facebook already verified it
-- **Errors**: `INVALID_FACEBOOK_TOKEN` (401), `FACEBOOK_EMAIL_REQUIRED` (400), `FACEBOOK_LOGIN_DISABLED` (404)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__Facebook__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__Facebook__AppId = "<app-id>"
-$env:AuthMicroservice__ExternalProviders__Facebook__AppSecret = "<app-secret>"
-```
-
-### LINE
-
-LINE supports **two flows** — เลือกใช้ตาม client:
-
-**Mode A — LIFF / token-exchange** (default, ไม่ต้องตั้ง `ChannelSecret`)
-
-- **Endpoint**: `POST /auth/external/line` — body `{ "idToken": "..." }` (obtained from LIFF via `liff.getIDToken()`)
-- **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, VerifyEndpoint }` (default endpoint `https://api.line.me/oauth2/v2.1/verify`)
-- **Validation**: POST `id_token` + `ChannelId` to LINE verify endpoint — validates `aud` = `ChannelId`, `iss` = `https://access.line.me`, `exp`
-- **Provider quirks**: email is optional in the LINE Login scope. If the user's channel/consent does not include email, the user is still auto-provisioned with a synthesized placeholder email `{subject}@line.local` and `EmailConfirmed=false` (same pattern as ThaID). If email *is* returned, it is stored as-is with `EmailConfirmed=true`.
-- **Errors**: `INVALID_LINE_TOKEN` (401), `LINE_LOGIN_DISABLED` (404)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
-```
-
-**Mode B — OIDC redirect (challenge/callback)** — เปิดโดยตั้ง `ChannelSecret`
-
-Pattern เดียวกับ ThaID — เหมาะกับ web SPA ที่ไม่ใช่ LIFF app หรือกรณีอยากให้ server ควบคุม PKCE / state / nonce เอง
-
-- **Endpoints (redirect flow, no token-exchange)**:
-  - `GET /auth/external/challenge/line?returnUrl=<frontend-url>` — สร้าง state + PKCE code_verifier + nonce, เก็บผ่าน `ILineStateStore` (in-memory default), แล้ว 302-redirect ไปหน้า authorize ของ LINE
-  - `GET /auth/external/callback/line?code=&state=` — เรียกโดย LINE หลัง user login: verify state, แลก `code` เอา `id_token` ที่ `TokenEndpoint`, ตรวจ nonce, ออก JWT + refresh, แล้ว 302 กลับ `returnUrl` (พร้อม tokens ต่อท้ายเป็น URL fragment)
-- **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, ChannelSecret, Authority, TokenEndpoint, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes }`
-  - `Authority` default `https://access.line.me`
-  - `TokenEndpoint` default `https://api.line.me/oauth2/v2.1/token`
-  - `RedirectUri` **ต้องตรงกับ** Callback URL ที่ลงทะเบียนใน LINE Developers console
-  - `AllowedReturnUrlPrefixes` = whitelist ของ frontend URL prefix ที่ยอมให้ redirect กลับ (open-redirect guard)
-  - `Scopes` default `openid profile email`
-  - `StateLifetimeMinutes` default `10`
-- **Validation**: OIDC — id_token verify กับ LINE, PKCE (S256), state + nonce ตรวจสอบผ่าน `ILineStateStore`
-- **Errors (นอกเหนือจาก Mode A)**: `INVALID_LINE_STATE` (400 — state ไม่ตรง/หมดอายุ), `LINE_RETURN_URL_NOT_ALLOWED` (400 — `returnUrl` ไม่อยู่ใน `AllowedReturnUrlPrefixes`), `INVALID_LINE_TOKEN` (401 — code exchange fail หรือ nonce mismatch)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
-$env:AuthMicroservice__ExternalProviders__Line__ChannelSecret = "<line-channel-secret>"
-$env:AuthMicroservice__ExternalProviders__Line__RedirectUri = "https://localhost:5100/auth/external/callback/line"
-$env:AuthMicroservice__ExternalProviders__Line__AllowedReturnUrlPrefixes__0 = "http://localhost:5173"
-```
-
-### ThaID (Thai national digital ID / DOPA)
-
-- **Endpoints (redirect flow, no token-exchange)**:
-  - `GET /auth/external/thaid/challenge?returnUrl=<frontend-url>` — generates state + PKCE code_verifier, stores them via `IThaIdStateStore` (in-memory by default), then 302-redirects the browser to ThaID's `authorize` endpoint
-  - `GET /auth/external/thaid/callback?code=&state=` — invoked by ThaID after the user logs in; verifies state + PKCE, exchanges `code` for tokens at `Authority`, issues this service's JWT + refresh, then 302-redirects back to the original `returnUrl` with the tokens appended
-- **Config**: `AuthMicroservice:ExternalProviders:ThaId:{ Enabled, ClientId, ClientSecret, Authority, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes }`
-  - `Authority` default (sandbox) `https://imauthtestc.bora.dopa.go.th/api/v2/oauth2` — for production use `https://imauth.bora.dopa.go.th/api/v2/oauth2`
-  - `RedirectUri` **ต้องตรงกับ** URL ที่ลงทะเบียนไว้กับ DOPA (เช่น `https://localhost:5100/auth/external/thaid/callback` ตอน dev)
-  - `AllowedReturnUrlPrefixes` = whitelist ของ frontend URL prefix ที่ยอมให้ redirect กลับ (open-redirect guard)
-  - `Scopes` default `openid pid given_name family_name email birthdate address`
-  - `StateLifetimeMinutes` default `10`
-- **Validation**: OIDC metadata จาก `Authority`, PKCE (S256), state verification ผ่าน `IThaIdStateStore`
-- **Provider quirks**: email เป็น optional scope — ถ้า ThaID ไม่ส่ง email กลับมา, user ถูก auto-provision ด้วย placeholder `{pid}@thaid.local` + `EmailConfirmed=false` (pattern เดียวกับ LINE). ถ้ามี email ก็ใช้ตามที่ได้ + `EmailConfirmed=true`
-- **Errors**: `INVALID_THAID_STATE` (400 — state ไม่ตรง/หมดอายุ), `INVALID_THAID_CODE` (401 — แลก token ไม่ผ่าน), `THAID_RETURN_URL_NOT_ALLOWED` (400 — `returnUrl` ไม่อยู่ใน `AllowedReturnUrlPrefixes`), `THAID_LOGIN_DISABLED` (404)
-
-```powershell
-$env:AuthMicroservice__ExternalProviders__ThaId__Enabled = "true"
-$env:AuthMicroservice__ExternalProviders__ThaId__ClientId = "<dopa-client-id>"
-$env:AuthMicroservice__ExternalProviders__ThaId__ClientSecret = "<dopa-client-secret>"
-$env:AuthMicroservice__ExternalProviders__ThaId__RedirectUri = "https://localhost:5100/auth/external/thaid/callback"
-```
-
-### Sample request
-
-คล้ายกันทั้ง 4 provider — ต่างกันแค่ path และ field name: **Microsoft/LINE** ใช้ `idToken`, **Facebook** ใช้ `accessToken`, **Google** ใช้ `code` (authorization code — backend แลก `id_token` ต่อกับ Google เอง):
-
-```http
-POST /auth/external/google
-Content-Type: application/json
-
-{ "code": "4/0Ab_5qll..." }
-```
-
-```http
-POST /auth/external/microsoft
-Content-Type: application/json
-
-{ "idToken": "eyJhbGciOi..." }
-```
-
-**ThaID is different**: the browser starts by navigating to `GET /auth/external/thaid/challenge?returnUrl=https://myapp/login-callback` (no body); the service handles the rest of the OIDC dance and eventually redirects the browser back to `returnUrl` with the issued tokens.
-
-### Running the browser test harnesses over HTTPS
-
-Provider SDKs (LIFF, Google Identity, MSAL, Facebook Login) require the page to be served over HTTPS — `file://` and plain `http://` won't work. Serve the repo root with [`dotnet-serve`](https://github.com/natemcmaster/dotnet-serve) — dev cert is generated automatically:
-
-```powershell
-dotnet tool install -g dotnet-serve                    # one-time install
-dotnet dev-certs https --trust                          # one-time trust
-dotnet serve -d c:\Code\AuthMicroServices -p 5001 -S    # -S = HTTPS
-```
-
-เปิด `https://localhost:5001/test-html/test-line.html` (หรือ `test-google.html` / `test-microsoft.html` / `test-facebook.html` / `test-thaid.html`) เพื่อทดสอบแต่ละ provider.
+ทั้งหมด **disabled by default**. Config, validation quirks, error mapping, env-var examples และ browser test harness setup ครบที่ [docs/EXTERNAL_PROVIDERS.md](docs/EXTERNAL_PROVIDERS.md). วิธีขอ credential จาก provider console (Google Cloud / Azure Portal / Meta / LINE Developers / DOPA) อยู่ที่ [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md)
 
 ## EF Core migrations (per provider)
 
@@ -616,104 +288,9 @@ dotnet test
 
 MIT — free to use as a base for your own projects.
 
-## สรุปสิ่งที่สร้าง
-Solution: [c:\Code\AuthMicroServices](c:\Code\AuthMicroServices)
-
-- AuthMicroservice.Core — reusable library ครบชุด (domain, EF context, JWT/refresh/email services, minimal-API endpoints, DI extensions)
-- Migrations.SqlServer / Postgres / Sqlite — Initial migration ถูก generate แล้วทั้ง 3 provider
-- AuthMicroservice.Api — standalone host ~20 บรรทัดใน Program.cs + Serilog + Swagger
-- AuthMicroservice.Sample — library-mode demo (SQLite, no email, /whoami + /admin-only)
-- UnitTests — JWT service, refresh rotation, email templates, validators
-- IntegrationTests — full register→verify→login→refresh→forgot/reset→change→lockout ผ่าน WebApplicationFactory + InMemory DB + FakeEmailSender
-- Dockerfile + docker-compose.yml + override — SQL Server 2022 + Mailhog stack
-- README.md — quickstart, endpoint table, config reference, verification steps
-
-
-## Config contract (สิ่งที่ผู้ใช้ library ต้องรู้)
-
-```
-builder.Services.AddAuthMicroservice(builder.Configuration);
-app.UseAuthMicroservice();
-app.MapAuthMicroservice();
-await app.ApplyAuthMicroserviceMigrationsAsync();
-```
-
-Provider เลือกใน appsettings.json ที่ key AuthMicroservice:Database:Provider — startup fail-fast ถ้า JWT key < 32 chars หรือ SMTP host หายเมื่อ Email.Enabled=true
-
-### ข้อสังเกตสำคัญ
-
-1. Refresh token เก็บเป็น SHA-256 hash ไม่เก็บ raw + มี rotation chain (revoke ทั้ง chain ถ้าเจอ replay)
-2. Options ผูกแบบ lazy ผ่าน IConfigureOptions<IdentityOptions> + IConfigureOptions<JwtBearerOptions> เพื่อให้ test override config ทำงานได้ถูกต้อง (bug ที่แก้ระหว่างทาง)
-3. Migrations แยก 3 assembly ต่อ provider พร้อม IDesignTimeDbContextFactory แต่ละตัว — เพิ่ม column ใหม่ต้อง run migrations add 3 ครั้ง (idiomatic ของ EF Core)
-4. NU1902 warnings ของ MailKit/MimeKit ที่เห็นทั้ง build เป็น DoS ตอน parse email ขาเข้า — เราใช้ SMTP ส่งอย่างเดียว ไม่กระทบ
-5. IEmailSender เปลี่ยนได้ ผ่าน services.AddSingleton<IEmailSender, MySendGridSender>() โดยไม่ต้องแตะ IEmailService (templates + link building ยัง reuse ได้)
-
-ทดสอบขั้นถัดไป (optional): dotnet run --project src/AuthMicroservice.Sample เพื่อยิง Swagger UI ที่ http://localhost:5100/swagger
-
 ## Changelog
 
-### v1.3.1 — 2026-09-25
-
-- **LINE OIDC redirect flow**: LINE รองรับ 2 flows แล้ว — LIFF token-exchange เดิม (`POST /auth/external/line`) และ OIDC redirect flow (`GET /auth/external/challenge/line` + `GET /auth/external/callback/line`) pattern เดียวกับ ThaID. เปิดโดยตั้ง `AuthMicroservice:ExternalProviders:Line:ChannelSecret` — validator บังคับ `RedirectUri` + `AllowedReturnUrlPrefixes` ≥ 1 entry เมื่อตั้ง ChannelSecret (open-redirect guard). Config ใหม่: `ChannelSecret`, `Authority` (default `https://access.line.me`), `TokenEndpoint`, `RedirectUri`, `AllowedReturnUrlPrefixes`, `Scopes` (default `openid profile email`), `StateLifetimeMinutes` (default 10). Nonce validated จาก `id_token` เทียบกับที่เก็บใน state store. Error codes ใหม่: `INVALID_LINE_STATE` (400), `LINE_RETURN_URL_NOT_ALLOWED` (400). Endpoint toggles ใหม่: `Endpoints:ExternalLineChallenge`, `Endpoints:ExternalLineCallback` (auto-hide จาก Swagger คล้าย ThaID).
-- **Login 2FA resend endpoint**: เพิ่ม `POST /auth/login/2fa/resend {email}` — ให้ client ขอ OTP ใหม่ได้หลัง `/auth/login` ตอบ 202 โดยไม่ต้องเริ่ม login ซ้ำ. Silent success ทุกกรณี (กัน account enumeration); คืน 429 `OTP_COOLDOWN_ACTIVE` ถ้ายิงถี่เกิน `ResendCooldownSeconds`. Toggle: `Endpoints:LoginTwoFactorResend`.
-- **Email verify hardening**: `POST /auth/otp/email/verify` เดิม silent success กรณี user verified แล้ว (return 200 OK) — เปลี่ยนเป็นคืน 409 `EMAIL_ALREADY_VERIFIED` เพื่อบอก client ว่าไม่ต้องเรียกซ้ำ. Non-breaking สำหรับ flow ปกติ (user ยังไม่ verify).
-
-### v1.3.0 — 2026-09-23
-
-- **Email OTP (6-digit)** สำหรับ 2 flows — ทางเลือกคู่ขนานกับ link-based flow เดิม (toggle ได้):
-  - **Email verification via OTP** — `POST /auth/otp/email/send` + `POST /auth/otp/email/verify` (แทน/เสริม verify-email link)
-  - **Login 2FA** — user ที่ `TwoFactorEnabled=true` เมื่อ login สำเร็จด้วย password จะได้ 202 (`TWO_FACTOR_REQUIRED`) + OTP ส่งไปที่ email → ต้อง `POST /auth/login/2fa/verify {email, code}` เพื่อรับ JWT. Enable/disable ผ่าน `POST /auth/2fa/enable-request` → `POST /auth/2fa/enable-confirm` (auth required) และ `POST /auth/2fa/disable` (require password confirm)
-  - Password reset ยังใช้ token-based link flow เดิม (`POST /auth/forgot-password` + `POST /auth/reset-password`) — ไม่มี OTP variant
-- **Storage & security**: OTP เก็บใน `auth.OtpCodes` (ไม่เก็บ plaintext) — SHA-256(code + per-code random salt), constant-time compare, per-user+purpose invalidation ก่อน generate ใหม่, per-code MaxAttempts + resend cooldown, silent-success สำหรับ send endpoints (กัน account enumeration). Migration `AddOtpCodes` ครบ 3 provider (SqlServer / Postgres / Sqlite).
-- **Config**: ใหม่ `AuthMicroservice:Otp:{CodeLength, ExpirationMinutes, MaxAttempts, ResendCooldownSeconds, {EmailVerification, LoginTwoFactor}.Enabled}` — startup validate `CodeLength ∈ [4,10]`, `ExpirationMinutes > 0`, ฯลฯ. Endpoint toggles ใหม่ใน `AuthMicroservice:Endpoints:*` — ทุก endpoint เปิด/ปิด/hide-from-swagger ได้แยกกันเหมือน pattern เดิม.
-- **Error codes ใหม่**: `TWO_FACTOR_REQUIRED` (202), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` (409).
-- **Test harness**: [test-html/test-otp.html](test-html/test-otp.html) — Bootstrap 5 single-page console ครอบ 2 flows พร้อม log JSON response
-- **Extending `IEmailService`**: เพิ่ม `SendOtpAsync(user, code, purpose, expiresInMinutes, ct)` + 2 embedded HTML templates (`otp-email-verification.html`, `otp-login-2fa.html`) — replace ได้เหมือน `IEmailSender` เดิม
-
-### v1.2.1 — 2026-09-22
-
-- **Custom roles + assignable role at registration**: new config `AuthMicroservice:Identity:Roles:{DefaultRegistrationRole, AllowedSelfRegisterRoles, AdditionalRoles}` — seed extra roles (Moderator, ContentCreator, ฯลฯ) ผ่าน config โดยไม่ต้องแตะ DB เอง. `POST /auth/register` รับ optional `role` field — ถ้าอยู่ใน `AllowedSelfRegisterRoles` (หรือตรงกับ `DefaultRegistrationRole`) จะ assign role นั้นให้ user ใหม่, ไม่งั้น 400 `INVALID_ROLE`. Role validation happens **ก่อน** create user (fail-fast — no orphan users). External login flows (Google / Microsoft / Facebook / LINE / ThaID) ยังคง assign เฉพาะ `AuthRoles.User` — ไม่รับ `role` parameter.
-- **`ApplicationRole` metadata**: เพิ่ม 3 columns — `Description` (nvarchar(256), nullable), `IsSystem` (bit, `true` สำหรับ Admin/User และ `false` สำหรับ custom roles), `CreatedAtUtc` (datetime2). Migration `AddRoleMetadata` generate ครบทั้ง 3 provider (SqlServer / Postgres / Sqlite) — apply อัตโนมัติถ้า `AutoMigrate=true`.
-- **Startup fail-fast validation for roles**: `AdditionalRoles[].Name` required + ≤256 chars + ห้ามชนกับ system role + ห้าม duplicate; `AdditionalRoles[].Description` ≤256 chars; `DefaultRegistrationRole` required + ต้องอ้างถึง role ที่มีอยู่จริง; `AllowedSelfRegisterRoles[]` required + ต้องอ้างถึง role ที่มีอยู่จริง + ห้าม duplicate. Error code ใหม่: `INVALID_ROLE` (400).
-- **Backward compatible**: `role` field เป็น optional (payload เดิม fallback = `DefaultRegistrationRole = "User"`). Default `AllowedSelfRegisterRoles = []` และ `AdditionalRoles = []` — ถ้าไม่ตั้ง config อะไรเลย พฤติกรรมเหมือนก่อนหน้าทุกอย่าง.
-
-### v1.2.0 — 2026-09-22
-
-- **ThaID external login (Thai national digital ID / DOPA)**: new redirect-based OIDC flow — `GET /auth/external/thaid/challenge?returnUrl=...` เริ่ม flow (สร้าง state + PKCE, redirect ไป ThaID authorize) และ `GET /auth/external/thaid/callback?code=&state=` แลก tokens + ออก JWT/refresh + redirect กลับ `returnUrl`. Config `AuthMicroservice:ExternalProviders:ThaId:{Enabled, ClientId, ClientSecret, Authority, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes}` — sandbox authority `https://imauthtestc.bora.dopa.go.th/api/v2/oauth2`, prod `https://imauth.bora.dopa.go.th/api/v2/oauth2`. State + PKCE verified via `IThaIdStateStore` (in-memory default). Email เป็น optional scope — user ที่ไม่มี email ถูก auto-provision เป็น `{pid}@thaid.local` + `EmailConfirmed=false`. `AllowedReturnUrlPrefixes` เป็น open-redirect guard. Errors: `INVALID_THAID_STATE` (400), `INVALID_THAID_CODE` (401), `THAID_RETURN_URL_NOT_ALLOWED` (400), `THAID_LOGIN_DISABLED` (404).
-- **NuGet package rebrand**: package IDs เปลี่ยน `Kittipot.AuthMicroservice.*` → `Synergy.AuthMicroservice.*` (Core + Migrations.SqlServer/Postgres/Sqlite/InMemory) เพื่อสะท้อน ownership ของ Synergy Software — assembly names และ `using AuthMicroservice.Core.*` namespaces คงเดิม (source-compatible, แต่ผู้ใช้ที่ install จาก NuGet ต้อง `dotnet remove package Kittipot.AuthMicroservice.*` แล้ว `dotnet add package Synergy.AuthMicroservice.*`).
-- **Test harnesses reorganized + populated**: ย้าย `test-*.html` จาก repo root → [`test-html/`](test-html/) folder และเติมค่า client identifier ตัวอย่างจริงในแต่ละไฟล์ (Facebook AppId, Google Client ID, Microsoft Client ID, LINE LIFF ID) ให้กดปุ่มแล้วทดสอบได้ทันที + เพิ่ม [test-html/test-thaid.html](test-html/test-thaid.html).
-- **Local HTTPS testing docs**: เพิ่มขั้นตอน `dotnet-serve -S` + `dotnet dev-certs https --trust` ใน External login providers section — จำเป็นสำหรับ provider SDK ที่บังคับ HTTPS (LIFF, Google Identity, MSAL, Facebook Login).
-
-### v1.1.1 — 2026-09-21
-
-Adds three more external login providers on top of Google, sharing the same token-exchange flow (auto-link when local email is verified, reject `EMAIL_EXISTS_UNVERIFIED` otherwise, auto-provision new users with `EmailConfirmed=true` + `User` role) and the same fail-fast startup checks.
-
-- **Microsoft external login**: new `POST /auth/external/microsoft` accepting a Microsoft `id_token` (Azure AD or personal MSA). Config `AuthMicroservice:ExternalProviders:Microsoft:{Enabled, ClientId, TenantId}` — `TenantId` accepts `common` / `organizations` / `consumers` / a specific tenant GUID. Validation via OpenID Connect metadata (package: `Microsoft.IdentityModel.Protocols.OpenIdConnect`). Microsoft-issued email is treated as verified by default. Errors: `INVALID_MICROSOFT_TOKEN` (401), `MICROSOFT_LOGIN_DISABLED` (404).
-- **Facebook external login**: new `POST /auth/external/facebook` accepting a Facebook `access_token`. Config `AuthMicroservice:ExternalProviders:Facebook:{Enabled, AppId, AppSecret, GraphApiVersion}` (default `v18.0`). Validation via Graph `debug_token` then `GET /me?fields=id,email,name,picture` via `IHttpClientFactory`. Errors: `INVALID_FACEBOOK_TOKEN` (401), `FACEBOOK_EMAIL_REQUIRED` (400 — user did not grant the email scope), `FACEBOOK_LOGIN_DISABLED` (404).
-- **LINE external login**: new `POST /auth/external/line` accepting a LINE `id_token` (typically from LIFF `liff.getIDToken()`). Config `AuthMicroservice:ExternalProviders:Line:{Enabled, ChannelId, VerifyEndpoint}` (default endpoint `https://api.line.me/oauth2/v2.1/verify`). `ChannelId` is used as both the verify-endpoint client_id and the expected `aud`; `iss` must equal `https://access.line.me`. Email is optional — when LINE does not return email, users are auto-provisioned with a placeholder `{subject}@line.local` and `EmailConfirmed=false`. Errors: `INVALID_LINE_TOKEN` (401), `LINE_LOGIN_DISABLED` (404).
-- **Browser test harnesses**: added [test-google.html](test-google.html), [test-microsoft.html](test-microsoft.html), [test-facebook.html](test-facebook.html), [test-line.html](test-line.html) at repo root — one per provider, uses the provider's native JS SDK / LIFF to obtain a real token and POST it to the corresponding `/auth/external/*` endpoint.
-
-### v1.1.0 — 2026-09-16
-
-- **Google OAuth external login**: new `POST /auth/external/google` endpoint accepting a Google `id_token` and returning the service's JWT + refresh token. Token-exchange flow only (no cookie/redirect). Auto-provisions new users with `EmailConfirmed=true`, auto-links Google identities to existing verified local accounts, and rejects link attempts against unverified local accounts (`EMAIL_EXISTS_UNVERIFIED`) to prevent takeover. Package: `Google.Apis.Auth`. Config: `AuthMicroservice:ExternalProviders:Google:{Enabled, ClientId}` — disabled by default; endpoint returns 404 unless enabled. Startup fail-fast if `Enabled=true` without `ClientId`. Full unit + integration test coverage via `IGoogleTokenValidator` seam.
-
-### v1.0.2 — 2026-09-16
-
-- **InMemory adapter packable**: เพิ่ม `AuthMicroservice.Migrations.InMemory` เป็น NuGet package ตัวที่ 5 (Core + Migrations.{SqlServer, Postgres, Sqlite, InMemory}) — ใช้ `.UseInMemory()` extension สำหรับ tests/demos (ไม่แนะนำสำหรับ production เพราะ data หายทุก restart)
-- **`DatabaseProvider.InMemory` enum**: `AuthMicroservice:Database:Provider="InMemory"` ใช้งานได้แล้วใน config-driven dispatch ที่ `AuthMicroservice.Api/Program.cs` — connection string ถ้าใส่จะกลายเป็น database name, ถ้าเว้นว่างจะ fallback เป็น `"AuthMicroserviceInMemory"`
-- **Sample switched to InMemory**: `AuthMicroservice.Sample` ใช้ `.UseInMemory()` แทน `.UseSqlite()` — รัน `dotnet run --project src/AuthMicroservice.Sample` ได้เลยโดยไม่ต้องสร้างไฟล์ `sample.db`
-
-### v1.0.1 — 2026-09-14
-
-- **Package metadata**: เพิ่ม `Version`, `Authors`, `PackageLicenseExpression`, `RepositoryUrl` ใน `Directory.Build.props` — พร้อม `dotnet pack` เป็น NuGet ทั้ง 4 packages (Core + Migrations.SqlServer/Postgres/Sqlite)
-- **Migrations regenerated**: Initial migration ของทั้ง 3 provider ถูก regenerate ใหม่ให้ตรง schema ปัจจุบัน (SqlServer / Postgres / Sqlite) ผ่าน env-var override workflow (`AuthMicroservice__Database__Provider=...`)
-- **NuGet packaging ready**: 4 packable projects พร้อม pack — `AuthMicroservice.Core` + `AuthMicroservice.Migrations.{SqlServer,Postgres,Sqlite}` (build ด้วย `dotnet pack -c Release -o ./artifacts`)
-
-### v1.0.0 — initial release
-
-- Register/Login/Logout, JWT + refresh token rotation, email verification + password reset
-- Provider-agnostic EF Core (SqlServer / Postgres / Sqlite / InMemory)
-- Standalone API + library-mode consumer + Docker Compose + Sample + Unit/Integration tests
+Version history อยู่ที่ [CHANGELOG.md](CHANGELOG.md) — ล่าสุด **v1.3.2** (2026-09-25) เปลี่ยน Google login เป็น authorization-code flow (⚠️ breaking — frontend ต้อง migrate ไป `initCodeClient`)
 
 ## Future: Next Plan
 - v1.x candidates: ~~2FA (Email OTP)~~ ✅ / TOTP (authenticator apps) / SMS OTP, external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
