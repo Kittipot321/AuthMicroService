@@ -74,10 +74,27 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             }
         }
 
-        if (options.ExternalProviders.Line.Enabled &&
-            string.IsNullOrWhiteSpace(options.ExternalProviders.Line.ChannelId))
+        if (options.ExternalProviders.Line.Enabled)
         {
-            errors.Add("AuthMicroservice:ExternalProviders:Line:ChannelId is required when Line.Enabled=true.");
+            if (string.IsNullOrWhiteSpace(options.ExternalProviders.Line.ChannelId))
+            {
+                errors.Add("AuthMicroservice:ExternalProviders:Line:ChannelId is required when Line.Enabled=true.");
+            }
+
+            // ChannelSecret opts in to the authorization-code (challenge/callback) flow.
+            // When set, redirect URI and return-url whitelist are required for open-redirect protection.
+            if (!string.IsNullOrWhiteSpace(options.ExternalProviders.Line.ChannelSecret))
+            {
+                if (string.IsNullOrWhiteSpace(options.ExternalProviders.Line.RedirectUri))
+                {
+                    errors.Add("AuthMicroservice:ExternalProviders:Line:RedirectUri is required when Line.ChannelSecret is set.");
+                }
+
+                if (options.ExternalProviders.Line.AllowedReturnUrlPrefixes.Count == 0)
+                {
+                    errors.Add("AuthMicroservice:ExternalProviders:Line:AllowedReturnUrlPrefixes must contain at least one entry when Line.ChannelSecret is set.");
+                }
+            }
         }
 
         if (options.ExternalProviders.ThaId.Enabled)

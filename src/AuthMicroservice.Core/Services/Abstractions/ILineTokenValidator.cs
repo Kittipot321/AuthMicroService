@@ -9,7 +9,8 @@ public sealed record LineUserInfo(
     string Subject,
     string? Email,
     string? Name,
-    string? PictureUrl);
+    string? PictureUrl,
+    string? Nonce = null);
 
 public sealed class LineTokenValidationException : Exception
 {

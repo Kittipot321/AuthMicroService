@@ -42,3 +42,6 @@ Thumbs.db
 ## Docs
 docs/build-manual.py
 docs/AuthMicroservice-Manual-1.0.0.docx
+
+## Front-End (React/Vite under frontend/)
+frontend/

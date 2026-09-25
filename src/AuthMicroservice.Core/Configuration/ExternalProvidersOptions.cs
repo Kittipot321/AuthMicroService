@@ -52,7 +52,25 @@ public sealed class LineProviderOptions
     // LINE Login channel ID — used both as verify-endpoint client_id and as expected aud claim.
     public string ChannelId { get; set; } = string.Empty;
 
+    // Channel secret — required for authorization-code exchange (challenge/callback flow).
+    public string ChannelSecret { get; set; } = string.Empty;
+
+    // Authorize base URL — LINE production is https://access.line.me.
+    public string Authority { get; set; } = "https://access.line.me";
+
+    public string TokenEndpoint { get; set; } = "https://api.line.me/oauth2/v2.1/token";
+
     public string VerifyEndpoint { get; set; } = "https://api.line.me/oauth2/v2.1/verify";
+
+    // Absolute URL of this API's callback endpoint — must match the redirect_uri registered with LINE.
+    public string RedirectUri { get; set; } = string.Empty;
+
+    // Whitelist of allowed prefixes for the frontend returnUrl (open-redirect guard).
+    public List<string> AllowedReturnUrlPrefixes { get; set; } = new();
+
+    public string Scopes { get; set; } = "openid profile email";
+
+    public int StateLifetimeMinutes { get; set; } = 10;
 }
 
 public sealed class ThaIdProviderOptions

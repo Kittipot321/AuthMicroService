@@ -32,6 +32,8 @@ internal sealed class AuthService : IAuthService
     private readonly IMicrosoftTokenValidator _microsoftTokenValidator;
     private readonly IFacebookTokenValidator _facebookTokenValidator;
     private readonly ILineTokenValidator _lineTokenValidator;
+    private readonly ILineOidcClient _lineOidcClient;
+    private readonly ILineStateStore _lineStateStore;
     private readonly IThaIdOidcClient _thaIdOidcClient;
     private readonly IThaIdStateStore _thaIdStateStore;
     private readonly IOptionsMonitor<AuthMicroserviceOptions> _authOptions;
@@ -50,6 +52,8 @@ internal sealed class AuthService : IAuthService
         IMicrosoftTokenValidator microsoftTokenValidator,
         IFacebookTokenValidator facebookTokenValidator,
         ILineTokenValidator lineTokenValidator,
+        ILineOidcClient lineOidcClient,
+        ILineStateStore lineStateStore,
         IThaIdOidcClient thaIdOidcClient,
         IThaIdStateStore thaIdStateStore,
         IOptionsMonitor<AuthMicroserviceOptions> authOptions,
@@ -67,6 +71,8 @@ internal sealed class AuthService : IAuthService
         _microsoftTokenValidator = microsoftTokenValidator;
         _facebookTokenValidator = facebookTokenValidator;
         _lineTokenValidator = lineTokenValidator;
+        _lineOidcClient = lineOidcClient;
+        _lineStateStore = lineStateStore;
         _thaIdOidcClient = thaIdOidcClient;
         _thaIdStateStore = thaIdStateStore;
         _authOptions = authOptions;
@@ -591,6 +597,106 @@ internal sealed class AuthService : IAuthService
             return AuthResult<AuthResponse>.Failure(AuthErrorCodes.InvalidLineToken, "LINE id_token is invalid.");
         }
 
+        var provision = await ResolveOrProvisionLineUserAsync(lineUser, cancellationToken).ConfigureAwait(false);
+        if (!provision.Succeeded || provision.Value is null)
+        {
+            return PropagateFailure<ApplicationUser, AuthResponse>(provision);
+        }
+
+        var response = await BuildAuthResponseAsync(provision.Value, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public Task<AuthResult<LineChallengeResponse>> StartLineChallengeAsync(string? returnUrl, CancellationToken cancellationToken = default)
+    {
+        var line = _authOptions.CurrentValue.ExternalProviders.Line;
+        if (!line.Enabled)
+        {
+            return Task.FromResult(AuthResult<LineChallengeResponse>.Failure(
+                AuthErrorCodes.LineLoginDisabled, "LINE external login is not enabled."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(returnUrl) && !IsReturnUrlAllowed(returnUrl, line.AllowedReturnUrlPrefixes))
+        {
+            return Task.FromResult(AuthResult<LineChallengeResponse>.Failure(
+                AuthErrorCodes.LineReturnUrlNotAllowed, "returnUrl is not on the allowed list."));
+        }
+
+        var state = GenerateOpaqueToken();
+        var nonce = GenerateOpaqueToken();
+        var codeVerifier = GenerateCodeVerifier();
+        var codeChallenge = ComputeCodeChallenge(codeVerifier);
+
+        _lineStateStore.Save(
+            state,
+            new LineAuthState(codeVerifier, nonce, returnUrl, _clock.UtcNow),
+            TimeSpan.FromMinutes(Math.Max(1, line.StateLifetimeMinutes)));
+
+        string authorizeUrl;
+        try
+        {
+            authorizeUrl = _lineOidcClient.BuildAuthorizeUrl(state, codeChallenge, nonce);
+        }
+        catch (LineOidcException ex)
+        {
+            _logger.LogWarning(ex, "Failed to build LINE authorize URL.");
+            return Task.FromResult(AuthResult<LineChallengeResponse>.Failure(
+                AuthErrorCodes.LineLoginDisabled, ex.Message));
+        }
+
+        return Task.FromResult(AuthResult<LineChallengeResponse>.Success(
+            new LineChallengeResponse(authorizeUrl, state)));
+    }
+
+    public async Task<AuthResult<LineCallbackResponse>> LoginWithLineCallbackAsync(string code, string state, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
+        {
+            return AuthResult<LineCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidLineState, "Missing code or state.");
+        }
+
+        var authState = _lineStateStore.Consume(state);
+        if (authState is null)
+        {
+            return AuthResult<LineCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidLineState, "LINE state is unknown or expired.");
+        }
+
+        LineUserInfo lineUser;
+        try
+        {
+            lineUser = await _lineOidcClient.ExchangeAndFetchUserAsync(code, authState.CodeVerifier, cancellationToken).ConfigureAwait(false);
+        }
+        catch (LineOidcException ex)
+        {
+            _logger.LogWarning(ex, "LINE code exchange failed.");
+            return AuthResult<LineCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidLineToken, "LINE authorization code is invalid or expired.");
+        }
+
+        if (!string.IsNullOrEmpty(authState.Nonce) &&
+            !string.Equals(lineUser.Nonce, authState.Nonce, StringComparison.Ordinal))
+        {
+            _logger.LogWarning("LINE id_token nonce mismatch.");
+            return AuthResult<LineCallbackResponse>.Failure(
+                AuthErrorCodes.InvalidLineToken, "LINE id_token nonce does not match.");
+        }
+
+        var provision = await ResolveOrProvisionLineUserAsync(lineUser, cancellationToken).ConfigureAwait(false);
+        if (!provision.Succeeded || provision.Value is null)
+        {
+            return PropagateFailure<ApplicationUser, LineCallbackResponse>(provision);
+        }
+
+        var response = await BuildAuthResponseAsync(provision.Value, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<LineCallbackResponse>.Success(new LineCallbackResponse(response, authState.ReturnUrl));
+    }
+
+    private async Task<AuthResult<ApplicationUser>> ResolveOrProvisionLineUserAsync(
+        LineUserInfo lineUser,
+        CancellationToken cancellationToken)
+    {
         var user = await _userManager.FindByLoginAsync(LineLoginProvider, lineUser.Subject).ConfigureAwait(false);
 
         if (user is null)
@@ -604,7 +710,7 @@ internal sealed class AuthService : IAuthService
                 {
                     if (!byEmail.EmailConfirmed)
                     {
-                        return AuthResult<AuthResponse>.Failure(
+                        return AuthResult<ApplicationUser>.Failure(
                             AuthErrorCodes.EmailExistsUnverified,
                             "An unverified local account exists for this email. Verify it before linking a LINE login.");
                     }
@@ -614,7 +720,7 @@ internal sealed class AuthService : IAuthService
                         new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
                     if (!linkResult.Succeeded)
                     {
-                        return IdentityFailure<AuthResponse>(linkResult);
+                        return IdentityFailure<ApplicationUser>(linkResult);
                     }
 
                     user = byEmail;
@@ -641,7 +747,7 @@ internal sealed class AuthService : IAuthService
                 var createResult = await _userManager.CreateAsync(user).ConfigureAwait(false);
                 if (!createResult.Succeeded)
                 {
-                    return IdentityFailure<AuthResponse>(createResult);
+                    return IdentityFailure<ApplicationUser>(createResult);
                 }
 
                 await _userManager.AddToRoleAsync(user, _authOptions.CurrentValue.Identity.Roles.DefaultRegistrationRole).ConfigureAwait(false);
@@ -651,22 +757,29 @@ internal sealed class AuthService : IAuthService
                     new UserLoginInfo(LineLoginProvider, lineUser.Subject, LineLoginProvider)).ConfigureAwait(false);
                 if (!linkResult.Succeeded)
                 {
-                    return IdentityFailure<AuthResponse>(linkResult);
+                    return IdentityFailure<ApplicationUser>(linkResult);
                 }
             }
         }
 
         if (user.IsDeactivated)
         {
-            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
+            return AuthResult<ApplicationUser>.Failure(AuthErrorCodes.UserDeactivated, "User account is deactivated.");
         }
 
         user.LastLoginAt = _clock.UtcNow;
         await _userManager.UpdateAsync(user).ConfigureAwait(false);
 
-        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
-        return AuthResult<AuthResponse>.Success(response);
+        return AuthResult<ApplicationUser>.Success(user);
     }
+
+    private static AuthResult<TTo> PropagateFailure<TFrom, TTo>(AuthResult<TFrom> source) => new()
+    {
+        Succeeded = false,
+        ErrorCode = source.ErrorCode,
+        ErrorMessage = source.ErrorMessage,
+        ValidationErrors = source.ValidationErrors,
+    };
 
     public Task<AuthResult<ThaIdChallengeResponse>> StartThaIdChallengeAsync(string? returnUrl, CancellationToken cancellationToken = default)
     {
@@ -677,7 +790,7 @@ internal sealed class AuthService : IAuthService
                 AuthErrorCodes.ThaIdLoginDisabled, "ThaID external login is not enabled."));
         }
 
-        if (!string.IsNullOrWhiteSpace(returnUrl) && !IsReturnUrlAllowed(returnUrl, thaId))
+        if (!string.IsNullOrWhiteSpace(returnUrl) && !IsReturnUrlAllowed(returnUrl, thaId.AllowedReturnUrlPrefixes))
         {
             return Task.FromResult(AuthResult<ThaIdChallengeResponse>.Failure(
                 AuthErrorCodes.ThaIdReturnUrlNotAllowed, "returnUrl is not on the allowed list."));
@@ -782,9 +895,9 @@ internal sealed class AuthService : IAuthService
         return AuthResult<ThaIdCallbackResponse>.Success(new ThaIdCallbackResponse(response, authState.ReturnUrl));
     }
 
-    private static bool IsReturnUrlAllowed(string returnUrl, ThaIdProviderOptions thaId)
+    private static bool IsReturnUrlAllowed(string returnUrl, IReadOnlyList<string> allowedPrefixes)
     {
-        foreach (var prefix in thaId.AllowedReturnUrlPrefixes)
+        foreach (var prefix in allowedPrefixes)
         {
             if (!string.IsNullOrWhiteSpace(prefix) &&
                 returnUrl.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -970,7 +1083,7 @@ internal sealed class AuthService : IAuthService
 
         if (user.EmailConfirmed)
         {
-            return AuthResult.Success();
+            return AuthResult.Failure(AuthErrorCodes.EmailAlreadyVerified, "Email is already verified.");
         }
 
         var verify = await _otpService.VerifyAsync(user.Id, OtpPurpose.EmailVerification, request.Code, cancellationToken).ConfigureAwait(false);
@@ -1009,6 +1122,49 @@ internal sealed class AuthService : IAuthService
 
         var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
         return AuthResult<AuthResponse>.Success(response);
+    }
+
+    public async Task<AuthResult<TwoFactorRequiredResponse>> SendLoginTwoFactorOtpAsync(SendLoginTwoFactorOtpRequest request, string? ipAddress, CancellationToken cancellationToken = default)
+    {
+        var otpOptions = _authOptions.CurrentValue.Otp;
+        if (!otpOptions.LoginTwoFactor.Enabled)
+        {
+            return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.OtpDisabled, "Two-factor login via OTP is disabled.");
+        }
+
+        var silent = AuthResult<TwoFactorRequiredResponse>.Success(new TwoFactorRequiredResponse
+        {
+            Email = request.Email,
+            ExpiresAt = _clock.UtcNow.AddMinutes(otpOptions.ExpirationMinutes),
+            Message = "If the account has two-factor enabled, a code has been sent."
+        });
+
+        var user = await _userManager.FindByEmailAsync(request.Email).ConfigureAwait(false);
+        if (user is null || user.IsDeactivated || !user.TwoFactorEnabled)
+        {
+            return silent;
+        }
+
+        var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.LoginTwoFactor, ipAddress, cancellationToken).ConfigureAwait(false);
+        if (!generate.Succeeded || generate.Value is null)
+        {
+            if (generate.ErrorCode == AuthErrorCodes.OtpCooldownActive)
+            {
+                return AuthResult<TwoFactorRequiredResponse>.Failure(generate.ErrorCode, generate.ErrorMessage ?? "Please wait before requesting another code.");
+            }
+            return silent;
+        }
+
+        try
+        {
+            await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.LoginTwoFactor, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to send login 2FA OTP to {Email}.", user.Email);
+        }
+
+        return silent;
     }
 
     public async Task<AuthResult<TwoFactorRequiredResponse>> EnableTwoFactorRequestAsync(Guid userId, string? ipAddress, CancellationToken cancellationToken = default)

@@ -51,10 +51,13 @@ public sealed class EndpointOptions
     public EndpointToggle ExternalMicrosoft { get; set; } = new();
     public EndpointToggle ExternalFacebook { get; set; } = new();
     public EndpointToggle ExternalLine { get; set; } = new();
+    public EndpointToggle ExternalLineChallenge { get; set; } = new();
+    public EndpointToggle ExternalLineCallback { get; set; } = new();
     public EndpointToggle ExternalThaId { get; set; } = new();
     public EndpointToggle SendEmailVerificationOtp { get; set; } = new();
     public EndpointToggle VerifyEmailOtp { get; set; } = new();
     public EndpointToggle LoginTwoFactorVerify { get; set; } = new();
+    public EndpointToggle LoginTwoFactorResend { get; set; } = new();
     public EndpointToggle TwoFactorEnableRequest { get; set; } = new();
     public EndpointToggle TwoFactorEnableConfirm { get; set; } = new();
     public EndpointToggle TwoFactorDisable { get; set; } = new();

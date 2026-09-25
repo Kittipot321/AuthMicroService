@@ -117,9 +117,12 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IFacebookTokenValidator, FacebookTokenValidator>();
         services.AddHttpClient(LineTokenValidator.HttpClientName);
         services.TryAddSingleton<ILineTokenValidator, LineTokenValidator>();
+        services.AddHttpClient(LineOidcClient.HttpClientName);
+        services.TryAddSingleton<ILineOidcClient, LineOidcClient>();
         services.AddHttpClient(ThaIdOidcClient.HttpClientName);
         services.TryAddSingleton<IThaIdOidcClient, ThaIdOidcClient>();
         services.AddMemoryCache();
+        services.TryAddSingleton<ILineStateStore, InMemoryLineStateStore>();
         services.TryAddSingleton<IThaIdStateStore, InMemoryThaIdStateStore>();
         services.TryAddScoped<IAuthService, AuthService>();
 

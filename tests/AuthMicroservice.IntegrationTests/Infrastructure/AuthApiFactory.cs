@@ -17,6 +17,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 
     public FakeLineTokenValidator LineTokenValidator { get; } = new();
 
+    public FakeLineOidcClient LineOidcClient { get; } = new();
+
     public FakeThaIdOidcClient ThaIdOidcClient { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -47,6 +49,9 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<ILineTokenValidator>();
             services.AddSingleton<ILineTokenValidator>(LineTokenValidator);
+
+            services.RemoveAll<ILineOidcClient>();
+            services.AddSingleton<ILineOidcClient>(LineOidcClient);
 
             services.RemoveAll<IThaIdOidcClient>();
             services.AddSingleton<IThaIdOidcClient>(ThaIdOidcClient);

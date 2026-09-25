@@ -111,6 +111,13 @@ public static class AuthEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesValidationProblem());
 
+        MapIf(toggles.LoginTwoFactorResend, swaggerEnabled, () => group.MapPost("/login/2fa/resend", SendLoginTwoFactorOtpAsync)
+            .WithName("AuthLoginTwoFactorResend")
+            .AllowAnonymous()
+            .Produces<TwoFactorRequiredResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status429TooManyRequests)
+            .ProducesValidationProblem());
+
         MapIf(toggles.TwoFactorEnableRequest, swaggerEnabled, () => group.MapPost("/2fa/enable-request", TwoFactorEnableRequestAsync)
             .WithName("AuthTwoFactorEnableRequest")
             .RequireAuthorization()
@@ -205,6 +212,33 @@ public static class AuthEndpoints
             if (!toggles.ExternalLine.ShowInSwagger || !swaggerEnabled)
             {
                 lineBuilder.ExcludeFromDescription();
+            }
+        }
+
+        if ((toggles.ExternalLineChallenge.Enabled || toggles.ExternalLineCallback.Enabled)
+            && options.ExternalProviders.Line.Enabled)
+        {
+            var lineChallengeBuilder = group.MapGet("/external/challenge/line", ExternalLineChallengeAsync)
+                .WithName("AuthExternalLineChallenge")
+                .AllowAnonymous()
+                .Produces(StatusCodes.Status302Found)
+                .ProducesProblem(StatusCodes.Status400BadRequest)
+                .ProducesProblem(StatusCodes.Status404NotFound);
+
+            var lineCallbackBuilder = group.MapGet("/external/callback/line", ExternalLineCallbackAsync)
+                .WithName("AuthExternalLineCallback")
+                .AllowAnonymous()
+                .Produces(StatusCodes.Status302Found)
+                .ProducesProblem(StatusCodes.Status400BadRequest)
+                .ProducesProblem(StatusCodes.Status401Unauthorized);
+
+            if (!toggles.ExternalLineChallenge.ShowInSwagger || !swaggerEnabled)
+            {
+                lineChallengeBuilder.ExcludeFromDescription();
+            }
+            if (!toggles.ExternalLineCallback.ShowInSwagger || !swaggerEnabled)
+            {
+                lineCallbackBuilder.ExcludeFromDescription();
             }
         }
 
@@ -528,6 +562,57 @@ public static class AuthEndpoints
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
+    private static async Task<IResult> ExternalLineChallengeAsync(
+        [FromQuery] string? returnUrl,
+        IAuthService authService,
+        CancellationToken cancellationToken)
+    {
+        var result = await authService.StartLineChallengeAsync(returnUrl, cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return ToProblem(result);
+        }
+
+        return Results.Redirect(result.Value.AuthorizeUrl);
+    }
+
+    private static async Task<IResult> ExternalLineCallbackAsync(
+        [FromQuery] string code,
+        [FromQuery] string state,
+        [FromQuery(Name = "error")] string? error,
+        [FromQuery(Name = "error_description")] string? errorDescription,
+        IAuthService authService,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            return Results.Problem(
+                title: errorDescription ?? error,
+                statusCode: StatusCodes.Status401Unauthorized,
+                type: AuthErrorCodes.InvalidLineToken);
+        }
+
+        var result = await authService.LoginWithLineCallbackAsync(code, state, ResolveIp(http), cancellationToken);
+        if (!result.Succeeded || result.Value is null)
+        {
+            return ToProblem(result);
+        }
+
+        var auth = result.Value.AuthResponse;
+        var returnUrl = result.Value.ReturnUrl;
+        if (string.IsNullOrWhiteSpace(returnUrl))
+        {
+            return Results.Ok(auth);
+        }
+
+        var fragment =
+            $"#access_token={Uri.EscapeDataString(auth.AccessToken)}" +
+            $"&refresh_token={Uri.EscapeDataString(auth.RefreshToken)}" +
+            $"&expires_at={Uri.EscapeDataString(auth.ExpiresAt.ToString("O"))}";
+        return Results.Redirect(returnUrl + fragment);
+    }
+
     private static async Task<IResult> ExternalThaIdChallengeAsync(
         [FromQuery] string? returnUrl,
         IAuthService authService,
@@ -625,6 +710,22 @@ public static class AuthEndpoints
         }
 
         var result = await authService.LoginTwoFactorVerifyAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> SendLoginTwoFactorOtpAsync(
+        SendLoginTwoFactorOtpRequest request,
+        IAuthService authService,
+        IValidator<SendLoginTwoFactorOtpRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.SendLoginTwoFactorOtpAsync(request, ResolveIp(http), cancellationToken);
         return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
     }
 
@@ -734,6 +835,8 @@ public static class AuthEndpoints
             AuthErrorCodes.FacebookLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.InvalidLineToken => StatusCodes.Status401Unauthorized,
             AuthErrorCodes.LineLoginDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidLineState => StatusCodes.Status400BadRequest,
+            AuthErrorCodes.LineReturnUrlNotAllowed => StatusCodes.Status400BadRequest,
             AuthErrorCodes.ThaIdLoginDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.InvalidThaIdState => StatusCodes.Status400BadRequest,
             AuthErrorCodes.InvalidThaIdCode => StatusCodes.Status401Unauthorized,
@@ -748,6 +851,7 @@ public static class AuthEndpoints
             AuthErrorCodes.OtpDisabled => StatusCodes.Status404NotFound,
             AuthErrorCodes.TwoFactorNotEnabled => StatusCodes.Status409Conflict,
             AuthErrorCodes.TwoFactorAlreadyEnabled => StatusCodes.Status409Conflict,
+            AuthErrorCodes.EmailAlreadyVerified => StatusCodes.Status409Conflict,
             AuthErrorCodes.UserNotFound => StatusCodes.Status404NotFound,
             _ => StatusCodes.Status400BadRequest
         };

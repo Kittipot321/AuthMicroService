@@ -23,6 +23,8 @@ public static class AuthErrorCodes
     public const string FacebookLoginDisabled = "FACEBOOK_LOGIN_DISABLED";
     public const string InvalidLineToken = "INVALID_LINE_TOKEN";
     public const string LineLoginDisabled = "LINE_LOGIN_DISABLED";
+    public const string InvalidLineState = "INVALID_LINE_STATE";
+    public const string LineReturnUrlNotAllowed = "LINE_RETURN_URL_NOT_ALLOWED";
     public const string ThaIdLoginDisabled = "THAID_LOGIN_DISABLED";
     public const string InvalidThaIdState = "INVALID_THAID_STATE";
     public const string InvalidThaIdCode = "INVALID_THAID_CODE";
@@ -36,4 +38,5 @@ public static class AuthErrorCodes
     public const string OtpDisabled = "OTP_DISABLED";
     public const string TwoFactorNotEnabled = "TWOFA_NOT_ENABLED";
     public const string TwoFactorAlreadyEnabled = "TWOFA_ALREADY_ENABLED";
+    public const string EmailAlreadyVerified = "EMAIL_ALREADY_VERIFIED";
 }

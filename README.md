@@ -88,7 +88,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/2fa/enable-confirm` | auth | `{code}` — ยืนยัน OTP → `TwoFactorEnabled=true` |
 | POST | `/auth/2fa/disable` | auth | `{password}` — ปิด 2FA (ต้องยืนยัน password) |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` / `EMAIL_ALREADY_VERIFIED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -116,6 +116,19 @@ dotnet run --project src/AuthMicroservice.Sample
 ```
 
 The sample exposes `/whoami` (any authenticated user) and `/admin-only` (`Admin` role) to prove the consumer wiring end-to-end.
+
+## Frontend demo (React + Vite)
+
+`frontend/` เป็น React + TypeScript dev harness สำหรับสาธิต flow login กับ Sample ครอบคลุม `/auth/login` (+ `202` two-factor branch → `/auth/login/2fa/verify`), `/auth/me`, และ `/auth/logout`. ใช้ Vite dev proxy `/auth` → `http://localhost:5100/auth` จึงไม่ต้องตั้งค่า CORS บน backend
+
+```powershell
+dotnet run --project src/AuthMicroservice.Sample   # backend at :5100
+cd frontend
+npm install
+npm run dev                                        # frontend at :5173
+```
+
+รายละเอียดใน [frontend/README.md](frontend/README.md)
 
 ## End-to-end verification (PowerShell)
 
@@ -145,6 +158,112 @@ curl -X POST http://localhost:8080/auth/forgot-password -H "Content-Type: applic
 # 7. Trigger lockout (default 5 failed attempts)
 1..5 | ForEach-Object { curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d (@{ email="alice@example.com"; password="wrong" } | ConvertTo-Json) }
 ```
+
+## OTP / 2FA flow
+
+Feature v1.3 เพิ่ม email-based OTP สำหรับ **email verification** (ทดแทน / เสริม link ใน email) และสำหรับ **login two-factor** (สองขั้นตอนเมื่อ user เปิด 2FA)
+
+### Login 2FA — 2-step flow
+
+เมื่อ user เปิด 2FA แล้ว `POST /auth/login` จะไม่ return tokens ทันที แต่จะตอบ `202 Accepted` + ส่ง OTP ไปยัง email ก่อน จากนั้น client ต้องเรียก `/auth/login/2fa/verify` เพื่อแลก tokens
+
+```
+┌──────┐                     ┌────────┐                ┌─────────┐
+│Client│                     │  API   │                │  Email  │
+└───┬──┘                     └───┬────┘                └────┬────┘
+    │  POST /auth/login          │                          │
+    │  {email, password}         │                          │
+    │───────────────────────────>│                          │
+    │                            │  send OTP (6 digits)     │
+    │                            │─────────────────────────>│
+    │  202 Accepted              │                          │
+    │  { email, expiresAt,       │                          │
+    │    message }               │                          │
+    │<───────────────────────────│                          │
+    │                                                       │
+    │  (user opens inbox, reads code)                       │
+    │                                                       │
+    │  POST /auth/login/2fa/verify                          │
+    │  {email, code}             │                          │
+    │───────────────────────────>│                          │
+    │  200 OK                    │                          │
+    │  { accessToken,            │                          │
+    │    refreshToken, user }    │                          │
+    │<───────────────────────────│                          │
+```
+
+**Full example (PowerShell):**
+
+```powershell
+# 1. Register (2FA disabled by default)
+$reg = @{ email="bob@example.com"; password="P@ssw0rd!" } | ConvertTo-Json
+$tokens = curl -X POST http://localhost:8080/auth/register -H "Content-Type: application/json" -d $reg | ConvertFrom-Json
+
+# 2. Enable 2FA (requires bearer token from register/login)
+$headers = @{ Authorization = "Bearer $($tokens.accessToken)" }
+curl -X POST http://localhost:8080/auth/2fa/enable-request -H @headers
+# → grab OTP from Mailhog (http://localhost:8025)
+$confirm = @{ code="123456" } | ConvertTo-Json
+curl -X POST http://localhost:8080/auth/2fa/enable-confirm -H @headers -H "Content-Type: application/json" -d $confirm
+
+# 3. Login now returns 202 + sends OTP
+$login = @{ email="bob@example.com"; password="P@ssw0rd!" } | ConvertTo-Json
+$pending = curl -X POST http://localhost:8080/auth/login -H "Content-Type: application/json" -d $login
+# → status 202 { email, expiresAt, message: "Two-factor verification required." }
+
+# 4. Verify OTP → get tokens
+$verify = @{ email="bob@example.com"; code="654321" } | ConvertTo-Json
+$auth = curl -X POST http://localhost:8080/auth/login/2fa/verify -H "Content-Type: application/json" -d $verify | ConvertFrom-Json
+```
+
+### Email verification via OTP (alternative to link)
+
+`/auth/otp/email/send` + `/auth/otp/email/verify` เป็นทางเลือกของ `/auth/verify-email` (ลิงก์) เหมาะสำหรับ mobile apps / SPA ที่ไม่อยากจัดการ deep link
+
+```powershell
+# 1. After register (unverified user)
+$send = @{ email="carol@example.com" } | ConvertTo-Json
+curl -X POST http://localhost:8080/auth/otp/email/send -H "Content-Type: application/json" -d $send
+# → 200 OK silent success ทุกกรณี (ป้องกัน enumeration) แต่จะส่ง email เฉพาะกรณีที่ user มีจริงและยังไม่ verified
+
+# 2. User กรอก code จาก email
+$verify = @{ email="carol@example.com"; code="123456" } | ConvertTo-Json
+curl -X POST http://localhost:8080/auth/otp/email/verify -H "Content-Type: application/json" -d $verify
+# → 200 OK { "message": "Email verified." }
+# → 401 INVALID_OTP / OTP_EXPIRED / OTP_ATTEMPTS_EXCEEDED
+# → 429 OTP_COOLDOWN_ACTIVE (ถ้ายิง /send ถี่เกินไป)
+# → 409 EMAIL_ALREADY_VERIFIED (verify แล้ว — client ควรข้ามขั้นตอนนี้)
+```
+
+### Endpoint toggles
+
+ทุก OTP/2FA endpoint สามารถเปิด/ปิด ได้อิสระผ่าน `AuthMicroservice:Endpoints` (คืน 404 ตอน routing ถ้าปิด) หรือผ่าน `AuthMicroservice:Otp` (คืน 404 `OTP_DISABLED` ที่ handler ถ้าปิด purpose นั้นๆ ทั้ง feature)
+
+| Setting | Default | ผล |
+|---|---|---|
+| `Endpoints:SendEmailVerificationOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/send` ไม่ถูก map (404) |
+| `Endpoints:VerifyEmailOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/verify` ไม่ถูก map |
+| `Endpoints:LoginTwoFactorVerify.Enabled` | `true` | ปิด → route `/auth/login/2fa/verify` ไม่ถูก map |
+| `Endpoints:TwoFactorEnableRequest.Enabled` | `true` | ปิด → route `/auth/2fa/enable-request` ไม่ถูก map |
+| `Endpoints:TwoFactorEnableConfirm.Enabled` | `true` | ปิด → route `/auth/2fa/enable-confirm` ไม่ถูก map |
+| `Endpoints:TwoFactorDisable.Enabled` | `true` | ปิด → route `/auth/2fa/disable` ไม่ถูก map |
+| `Otp:EmailVerification.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` (route ยังอยู่) |
+| `Otp:LoginTwoFactor.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` — user ที่มี `TwoFactorEnabled=true` login ไม่ผ่าน 2FA แล้ว ระวังก่อนปิด |
+
+### Configuration knobs
+
+```json
+"Otp": {
+  "CodeLength": 6,               // 4-10
+  "ExpirationMinutes": 10,       // > 0
+  "MaxAttempts": 5,              // ก่อน mark consumed + คืน OTP_ATTEMPTS_EXCEEDED
+  "ResendCooldownSeconds": 60,   // ก่อนขอ code ใหม่ได้ — คืน 429 OTP_COOLDOWN_ACTIVE
+  "EmailVerification": { "Enabled": true },
+  "LoginTwoFactor":    { "Enabled": true }
+}
+```
+
+Browser test harness: [`test-html/test-otp.html`](test-html/test-otp.html) — เปิดใน browser หลัง `dotnet run` เพื่อทดสอบ flow ทั้งหมดโดยไม่ต้องเขียน curl
 
 ## Configuration reference
 

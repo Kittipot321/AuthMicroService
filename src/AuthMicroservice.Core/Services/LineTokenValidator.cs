@@ -110,7 +110,8 @@ internal sealed class LineTokenValidator : ILineTokenValidator
             Subject: claims.Sub,
             Email: claims.Email,
             Name: claims.Name,
-            PictureUrl: claims.Picture);
+            PictureUrl: claims.Picture,
+            Nonce: claims.Nonce);
     }
 
     private sealed record LineVerifyResponse
@@ -138,6 +139,9 @@ internal sealed class LineTokenValidator : ILineTokenValidator
 
         [JsonPropertyName("email")]
         public string? Email { get; init; }
+
+        [JsonPropertyName("nonce")]
+        public string? Nonce { get; init; }
     }
 
     private sealed record LineErrorResponse
