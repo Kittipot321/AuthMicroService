@@ -11,7 +11,7 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
 | Google | [console.cloud.google.com](https://console.cloud.google.com) | `Google` | `ClientId` |
 | Microsoft | [portal.azure.com](https://portal.azure.com) → Entra ID | `Microsoft` | `ClientId`, `TenantId` |
 | Facebook | [developers.facebook.com/apps](https://developers.facebook.com/apps) | `Facebook` | `AppId`, `AppSecret` |
-| LINE | [developers.line.biz/console](https://developers.line.biz/console) | `Line` | `ChannelId` |
+| LINE | [developers.line.biz/console](https://developers.line.biz/console) | `Line` | `ChannelId` (+ `ChannelSecret`, `RedirectUri`, `AllowedReturnUrlPrefixes` ถ้าใช้ OIDC redirect flow) |
 | ThaID | ยื่นเรื่องกับ DOPA (ไม่ใช่ self-service) | `ThaId` | `ClientId`, `ClientSecret`, `RedirectUri` |
 
 ---
@@ -127,19 +127,30 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
 - **Prerequisites**: LINE account
 - **Docs**: <https://developers.line.biz/en/docs/line-login/> · LIFF: <https://developers.line.biz/en/docs/liff/>
 
+LINE รองรับ **2 flows** — เลือกใช้ตาม client:
+- **Mode A — LIFF / token-exchange** (default): เหมาะกับ LIFF app ใน LINE. Frontend เอา `id_token` มา POST ที่ backend — ใช้แค่ `ChannelId`
+- **Mode B — OIDC redirect (challenge/callback)**: เหมาะกับ web SPA ปกติ. Server ควบคุม PKCE + state + nonce — ต้องมี `ChannelSecret` + `RedirectUri` + `AllowedReturnUrlPrefixes` เพิ่ม (pattern เดียวกับ ThaID)
+
 ### Steps
 
 1. Login → **Create a new provider** (Provider = "เจ้าของ" ของ channels)
 2. เข้า provider → **Create a new channel** → **LINE Login**
 3. ใส่ Channel name, description, region — กรอกจนเสร็จ
 4. **Basic settings** → copy **Channel ID** (ตัวเลข ~10 หลัก)
-5. **LINE Login** tab → **LIFF** → **Add** → ใส่:
+5. **Basic settings** → copy **Channel secret** (คลิก **Issue** ถ้ายังไม่มี) — **เก็บไว้ใช้กับ Mode B (OIDC) เท่านั้น**, Mode A (LIFF) ไม่ต้อง
+6. **LINE Login** tab → **LIFF** → **Add** → ใส่ (**สำหรับ Mode A**):
    - **Endpoint URL** = หน้า frontend ที่จะเปิดใน LIFF browser (เช่น `https://localhost:5001/test-html/test-line.html`)
    - **Scopes**: `openid`, `email`, `profile`
-6. Copy **LIFF ID** (สำหรับ frontend `liff.init()`) — Channel ID ใช้ที่ backend
-7. (Optional) **OpenID Connect** → **Email address permission** → **Apply** → ให้ LINE approve ก่อนจะได้ email กลับมา
+7. Copy **LIFF ID** (สำหรับ frontend `liff.init()`) — Channel ID ใช้ที่ backend
+8. **LINE Login** tab → **Callback URL** (**สำหรับ Mode B**):
+   - ใส่ URL ของ backend callback เช่น `https://your-domain/auth/external/callback/line` (dev: `https://localhost:5100/auth/external/callback/line`)
+   - **ต้องตรงเป๊ะ** กับ `RedirectUri` ใน config (case-sensitive, มี/ไม่มี trailing slash ต่างกัน) — mismatch = LINE ปฏิเสธ callback
+   - Production ต้องเป็น HTTPS จริง (LINE ไม่ยอมรับ localhost/http นอก dev)
+9. (Optional) **OpenID Connect** → **Email address permission** → **Apply** → ให้ LINE approve ก่อนจะได้ email กลับมา
 
 ### Where to paste
+
+**Mode A — LIFF / token-exchange** (minimal):
 
 ```jsonc
 "Line": {
@@ -149,8 +160,27 @@ Config ทุก provider อยู่ใต้ `AuthMicroservice:ExternalProvid
 }
 ```
 
+**Mode B — OIDC redirect** (challenge/callback endpoints เปิดใช้เมื่อตั้ง `ChannelSecret`):
+
+```jsonc
+"Line": {
+  "Enabled": true,
+  "ChannelId": "2011682506",
+  "ChannelSecret": "<channel-secret-from-line-console>",
+  "Authority": "https://access.line.me",
+  "TokenEndpoint": "https://api.line.me/oauth2/v2.1/token",
+  "RedirectUri": "https://localhost:5100/auth/external/callback/line",
+  "AllowedReturnUrlPrefixes": [ "http://localhost:5173", "https://localhost:5100" ],
+  "Scopes": "openid profile email",
+  "StateLifetimeMinutes": 10
+}
+```
+
 > **Note**:
-> - `VerifyEndpoint` เป็น default ของ LINE ปกติไม่ต้องแตะ
+> - `VerifyEndpoint` / `Authority` / `TokenEndpoint` เป็น default ของ LINE ปกติไม่ต้องแตะ
+> - ไม่ตั้ง `ChannelSecret` = Mode A เท่านั้น (endpoint `POST /auth/external/line`); ตั้ง `ChannelSecret` = เปิด Mode B เพิ่ม (`GET /auth/external/challenge/line` + `/callback/line`) — Mode A ก็ยังใช้ได้ ทั้งคู่ทำงานพร้อมกันได้
+> - Startup fail-fast: ถ้าตั้ง `ChannelSecret` แต่ไม่มี `RedirectUri` หรือ `AllowedReturnUrlPrefixes` ว่าง → app start ไม่ผ่าน
+> - `AllowedReturnUrlPrefixes` = whitelist ของ frontend URL prefix ที่ยอมให้ redirect กลับหลัง login (open-redirect guard) — mismatch จะได้ 400 `LINE_RETURN_URL_NOT_ALLOWED`
 > - ถ้ายังไม่ได้ approve email permission → user ที่ login จะถูก provision ด้วย placeholder `{subject}@line.local` + `EmailConfirmed=false`
 
 ---

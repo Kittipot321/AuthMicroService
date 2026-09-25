@@ -269,8 +269,11 @@ Provider ที่รองรับ + credentials ที่ต้องมี:
 | Google | `ClientId` | `POST /auth/external/google` |
 | Microsoft | `ClientId`, `TenantId` (default `common`) | `POST /auth/external/microsoft` |
 | Facebook | `AppId`, `AppSecret` | `POST /auth/external/facebook` |
-| LINE | `ChannelId` | `POST /auth/external/line` |
+| LINE — LIFF / token-exchange | `ChannelId` | `POST /auth/external/line` |
+| LINE — OIDC redirect (optional) | `ChannelId`, `ChannelSecret`, `RedirectUri`, `AllowedReturnUrlPrefixes` | `GET /auth/external/challenge/line` → `GET /auth/external/callback/line` |
 | ThaID | `ClientId`, `ClientSecret`, `Authority`, `RedirectUri`, `AllowedReturnUrlPrefixes` | `GET /auth/external/thaid/challenge` → `GET /auth/external/thaid/callback` (redirect flow) |
+
+> **LINE 2 modes**: LIFF/token-exchange (default) เหมาะกับ LINE app / LIFF page — frontend เอา `id_token` มายิง backend. OIDC redirect เปิดโดยตั้ง `ChannelSecret` — เหมาะกับ web SPA ปกติ, server ควบคุม PKCE + state + nonce เอง (pattern เดียวกับ ThaID). ทั้งคู่ทำงานพร้อมกันได้ถ้าตั้ง config ครบ
 
 **วิธีขอ credentials จาก Developer Console ของแต่ละ provider** (step-by-step): [docs/PROVIDER_SETUP.md](PROVIDER_SETUP.md)
 

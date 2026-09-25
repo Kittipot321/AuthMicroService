@@ -79,16 +79,19 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/external/microsoft` | anon | Microsoft `id_token` (Azure AD / MSA) → JWT. 404 unless `ExternalProviders:Microsoft:Enabled=true` |
 | POST | `/auth/external/facebook` | anon | Facebook `access_token` → JWT. 404 unless `ExternalProviders:Facebook:Enabled=true` |
 | POST | `/auth/external/line` | anon | LINE `id_token` (LIFF) → JWT. 404 unless `ExternalProviders:Line:Enabled=true` |
+| GET | `/auth/external/challenge/line` | anon | `?returnUrl=...` → redirect ไปหน้า login LINE (สร้าง state + PKCE + nonce). ใช้เมื่อ `Line.ChannelSecret` ตั้งค่า (OIDC redirect flow แทน LIFF token-exchange) |
+| GET | `/auth/external/callback/line` | anon | `?code=&state=` จาก LINE → verify state + nonce, แลก token, ออก JWT + refresh, redirect กลับ `returnUrl` |
 | GET | `/auth/external/thaid/challenge` | anon | `?returnUrl=...` → redirect ไปหน้า login ของ ThaID (สร้าง state + PKCE, เก็บใน state store). 404 unless `ExternalProviders:ThaId:Enabled=true` |
 | GET | `/auth/external/thaid/callback` | anon | `?code=&state=` จาก ThaID → verify state, แลก tokens ที่ Authority, ออก JWT + refresh, redirect กลับ `returnUrl` ที่ระบุใน challenge |
 | POST | `/auth/otp/email/send` | anon | ส่ง 6-digit OTP ไปยัง email เพื่อ verify — silent success ถ้า email ไม่มี/verified แล้ว |
 | POST | `/auth/otp/email/verify` | anon | `{email, code}` — ยืนยัน OTP → set `EmailConfirmed=true` |
 | POST | `/auth/login/2fa/verify` | anon | `{email, code}` — ยืนยัน login OTP หลัง `/auth/login` ตอบ 202 (`TWO_FACTOR_REQUIRED`) |
+| POST | `/auth/login/2fa/resend` | anon | `{email}` — ขอส่ง OTP login 2FA ใหม่. Silent success ทุกกรณี (กัน enumeration); คืน 429 `OTP_COOLDOWN_ACTIVE` ถ้ายิงถี่เกิน |
 | POST | `/auth/2fa/enable-request` | auth | ส่ง OTP ไป email เพื่อเปิด 2FA |
 | POST | `/auth/2fa/enable-confirm` | auth | `{code}` — ยืนยัน OTP → `TwoFactorEnabled=true` |
 | POST | `/auth/2fa/disable` | auth | `{password}` — ปิด 2FA (ต้องยืนยัน password) |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` / `EMAIL_ALREADY_VERIFIED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN`, `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` / `EMAIL_ALREADY_VERIFIED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN` / `INVALID_LINE_STATE` (400) / `LINE_RETURN_URL_NOT_ALLOWED` (400), `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -192,6 +195,8 @@ Feature v1.3 เพิ่ม email-based OTP สำหรับ **email verifica
     │<───────────────────────────│                          │
 ```
 
+> **Resend**: ถ้า user ไม่ได้รับ email (หรือ code หมดอายุ) client เรียก `POST /auth/login/2fa/resend {email}` เพื่อขอ code ใหม่ — silent success ทุกกรณี (กัน enumeration) และ respect `ResendCooldownSeconds` — ถ้ายิงถี่เกินได้ 429 `OTP_COOLDOWN_ACTIVE`
+
 **Full example (PowerShell):**
 
 ```powershell
@@ -244,6 +249,9 @@ curl -X POST http://localhost:8080/auth/otp/email/verify -H "Content-Type: appli
 | `Endpoints:SendEmailVerificationOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/send` ไม่ถูก map (404) |
 | `Endpoints:VerifyEmailOtp.Enabled` | `true` | ปิด → route `/auth/otp/email/verify` ไม่ถูก map |
 | `Endpoints:LoginTwoFactorVerify.Enabled` | `true` | ปิด → route `/auth/login/2fa/verify` ไม่ถูก map |
+| `Endpoints:LoginTwoFactorResend.Enabled` | `true` | ปิด → route `/auth/login/2fa/resend` ไม่ถูก map |
+| `Endpoints:ExternalLineChallenge.{Enabled,ShowInSwagger}` | `true` / `true` | ปิด `Enabled` → route `/auth/external/challenge/line` ไม่ถูก map. ปิด `ShowInSwagger` → route ยังทำงาน แต่ถูก `ExcludeFromDescription` (แนะนำสำหรับ browser-redirect endpoint) |
+| `Endpoints:ExternalLineCallback.{Enabled,ShowInSwagger}` | `true` / `true` | เหมือน `ExternalLineChallenge` แต่สำหรับ `/auth/external/callback/line` |
 | `Endpoints:TwoFactorEnableRequest.Enabled` | `true` | ปิด → route `/auth/2fa/enable-request` ไม่ถูก map |
 | `Endpoints:TwoFactorEnableConfirm.Enabled` | `true` | ปิด → route `/auth/2fa/enable-confirm` ไม่ถูก map |
 | `Endpoints:TwoFactorDisable.Enabled` | `true` | ปิด → route `/auth/2fa/disable` ไม่ถูก map |
@@ -327,7 +335,18 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "Google":    { "Enabled": false, "ClientId": "" },
       "Microsoft": { "Enabled": false, "ClientId": "", "TenantId": "common" },
       "Facebook":  { "Enabled": false, "AppId": "", "AppSecret": "", "GraphApiVersion": "v18.0" },
-      "Line":      { "Enabled": false, "ChannelId": "", "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify" },
+      "Line":      {
+        "Enabled": false,
+        "ChannelId": "",                                                    // LINE Login channel ID — token-exchange flow ใช้เป็น aud
+        "ChannelSecret": "",                                                // ตั้งค่า = เปิด OIDC redirect flow (challenge/callback endpoints)
+        "Authority": "https://access.line.me",                              // LINE authorize base URL
+        "TokenEndpoint": "https://api.line.me/oauth2/v2.1/token",
+        "VerifyEndpoint": "https://api.line.me/oauth2/v2.1/verify",         // ใช้กับ LIFF token-exchange
+        "RedirectUri": "",                                                  // required เมื่อ ChannelSecret ตั้งค่า — ต้องตรงกับที่ลงทะเบียนใน LINE console
+        "AllowedReturnUrlPrefixes": [ ],                                    // whitelist ของ frontend returnUrl (open-redirect guard) — required เมื่อ ChannelSecret ตั้งค่า
+        "Scopes": "openid profile email",
+        "StateLifetimeMinutes": 10
+      },
       "ThaId":     {
         "Enabled": false,
         "ClientId": "", "ClientSecret": "",
@@ -350,7 +369,7 @@ Secrets are typically supplied via env vars using double-underscore syntax:
 - `AuthMicroservice__Database__ConnectionString`
 - `AuthMicroservice__Email__Smtp__Password`
 
-Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId`, ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`. `Identity.Roles` ก็ถูก validate — `AdditionalRoles[].Name` ห้ามว่าง / เกิน 256 chars / ชนกับ system role (`Admin`/`User`) / ซ้ำกัน, และ `DefaultRegistrationRole` + ทุก entry ใน `AllowedSelfRegisterRoles` ต้องอ้างถึง role ที่มีอยู่จริง (system หรือ `AdditionalRoles`).
+Startup fails fast if `Jwt.Key` is under 32 chars, an unknown DB provider is set, `Email.Enabled=true` without an SMTP host, or any enabled external provider is missing its required credentials — Google/Microsoft need `ClientId` (Microsoft also `TenantId`), Facebook needs `AppId` + `AppSecret`, LINE needs `ChannelId` (และถ้า `ChannelSecret` ตั้งค่าเพื่อเปิด OIDC redirect flow ต้องมี `RedirectUri` + `AllowedReturnUrlPrefixes` ≥ 1 entry ด้วย), ThaID needs `ClientId` + `ClientSecret` + `RedirectUri`. `Identity.Roles` ก็ถูก validate — `AdditionalRoles[].Name` ห้ามว่าง / เกิน 256 chars / ชนกับ system role (`Admin`/`User`) / ซ้ำกัน, และ `DefaultRegistrationRole` + ทุก entry ใน `AllowedSelfRegisterRoles` ต้องอ้างถึง role ที่มีอยู่จริง (system หรือ `AdditionalRoles`).
 
 ## Custom roles + assignable role at register
 
@@ -392,7 +411,7 @@ Content-Type: application/json
 
 ## External login providers
 
-Five providers are supported: **Google**, **Microsoft**, **Facebook**, **LINE**, and **ThaID** (Thai national digital ID). The first four use a **token-exchange** flow — client (SPA / mobile) obtains a provider token via the native SDK, POSTs it to this service, and gets back this service's own JWT + refresh token (no cookie/redirect handshake). **ThaID is the exception**: it uses the classic **OIDC redirect flow** (server-hosted `/challenge` + `/callback`) because ThaID mandates it — so ThaID needs a server-side callback URL registered with DOPA.
+Five providers are supported: **Google**, **Microsoft**, **Facebook**, **LINE**, and **ThaID** (Thai national digital ID). The first four use a **token-exchange** flow — client (SPA / mobile) obtains a provider token via the native SDK, POSTs it to this service, and gets back this service's own JWT + refresh token (no cookie/redirect handshake). **ThaID always uses the classic OIDC redirect flow** (server-hosted `/challenge` + `/callback`) because DOPA mandates it. **LINE supports both** — LIFF/token-exchange (default), and OIDC redirect (activated when `Line.ChannelSecret` is set) — so you can pick whichever fits your client (LIFF app vs. web SPA).
 
 > **จะเอาคีย์แต่ละ provider มาจากไหน?** ดู [docs/PROVIDER_SETUP.md](docs/PROVIDER_SETUP.md) — step-by-step guide ตั้งแต่สมัคร Developer Console ของ Google / Microsoft / Facebook / LINE / DOPA จนได้ credentials มาวางใน `appsettings.json`
 
@@ -452,6 +471,10 @@ $env:AuthMicroservice__ExternalProviders__Facebook__AppSecret = "<app-secret>"
 
 ### LINE
 
+LINE supports **two flows** — เลือกใช้ตาม client:
+
+**Mode A — LIFF / token-exchange** (default, ไม่ต้องตั้ง `ChannelSecret`)
+
 - **Endpoint**: `POST /auth/external/line` — body `{ "idToken": "..." }` (obtained from LIFF via `liff.getIDToken()`)
 - **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, VerifyEndpoint }` (default endpoint `https://api.line.me/oauth2/v2.1/verify`)
 - **Validation**: POST `id_token` + `ChannelId` to LINE verify endpoint — validates `aud` = `ChannelId`, `iss` = `https://access.line.me`, `exp`
@@ -461,6 +484,31 @@ $env:AuthMicroservice__ExternalProviders__Facebook__AppSecret = "<app-secret>"
 ```powershell
 $env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
 $env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
+```
+
+**Mode B — OIDC redirect (challenge/callback)** — เปิดโดยตั้ง `ChannelSecret`
+
+Pattern เดียวกับ ThaID — เหมาะกับ web SPA ที่ไม่ใช่ LIFF app หรือกรณีอยากให้ server ควบคุม PKCE / state / nonce เอง
+
+- **Endpoints (redirect flow, no token-exchange)**:
+  - `GET /auth/external/challenge/line?returnUrl=<frontend-url>` — สร้าง state + PKCE code_verifier + nonce, เก็บผ่าน `ILineStateStore` (in-memory default), แล้ว 302-redirect ไปหน้า authorize ของ LINE
+  - `GET /auth/external/callback/line?code=&state=` — เรียกโดย LINE หลัง user login: verify state, แลก `code` เอา `id_token` ที่ `TokenEndpoint`, ตรวจ nonce, ออก JWT + refresh, แล้ว 302 กลับ `returnUrl` (พร้อม tokens ต่อท้ายเป็น URL fragment)
+- **Config**: `AuthMicroservice:ExternalProviders:Line:{ Enabled, ChannelId, ChannelSecret, Authority, TokenEndpoint, RedirectUri, AllowedReturnUrlPrefixes, Scopes, StateLifetimeMinutes }`
+  - `Authority` default `https://access.line.me`
+  - `TokenEndpoint` default `https://api.line.me/oauth2/v2.1/token`
+  - `RedirectUri` **ต้องตรงกับ** Callback URL ที่ลงทะเบียนใน LINE Developers console
+  - `AllowedReturnUrlPrefixes` = whitelist ของ frontend URL prefix ที่ยอมให้ redirect กลับ (open-redirect guard)
+  - `Scopes` default `openid profile email`
+  - `StateLifetimeMinutes` default `10`
+- **Validation**: OIDC — id_token verify กับ LINE, PKCE (S256), state + nonce ตรวจสอบผ่าน `ILineStateStore`
+- **Errors (นอกเหนือจาก Mode A)**: `INVALID_LINE_STATE` (400 — state ไม่ตรง/หมดอายุ), `LINE_RETURN_URL_NOT_ALLOWED` (400 — `returnUrl` ไม่อยู่ใน `AllowedReturnUrlPrefixes`), `INVALID_LINE_TOKEN` (401 — code exchange fail หรือ nonce mismatch)
+
+```powershell
+$env:AuthMicroservice__ExternalProviders__Line__Enabled = "true"
+$env:AuthMicroservice__ExternalProviders__Line__ChannelId = "<line-login-channel-id>"
+$env:AuthMicroservice__ExternalProviders__Line__ChannelSecret = "<line-channel-secret>"
+$env:AuthMicroservice__ExternalProviders__Line__RedirectUri = "https://localhost:5100/auth/external/callback/line"
+$env:AuthMicroservice__ExternalProviders__Line__AllowedReturnUrlPrefixes__0 = "http://localhost:5173"
 ```
 
 ### ThaID (Thai national digital ID / DOPA)
@@ -595,6 +643,12 @@ Provider เลือกใน appsettings.json ที่ key AuthMicroservice:D
 ทดสอบขั้นถัดไป (optional): dotnet run --project src/AuthMicroservice.Sample เพื่อยิง Swagger UI ที่ http://localhost:5100/swagger
 
 ## Changelog
+
+### v1.3.1 — 2026-09-25
+
+- **LINE OIDC redirect flow**: LINE รองรับ 2 flows แล้ว — LIFF token-exchange เดิม (`POST /auth/external/line`) และ OIDC redirect flow (`GET /auth/external/challenge/line` + `GET /auth/external/callback/line`) pattern เดียวกับ ThaID. เปิดโดยตั้ง `AuthMicroservice:ExternalProviders:Line:ChannelSecret` — validator บังคับ `RedirectUri` + `AllowedReturnUrlPrefixes` ≥ 1 entry เมื่อตั้ง ChannelSecret (open-redirect guard). Config ใหม่: `ChannelSecret`, `Authority` (default `https://access.line.me`), `TokenEndpoint`, `RedirectUri`, `AllowedReturnUrlPrefixes`, `Scopes` (default `openid profile email`), `StateLifetimeMinutes` (default 10). Nonce validated จาก `id_token` เทียบกับที่เก็บใน state store. Error codes ใหม่: `INVALID_LINE_STATE` (400), `LINE_RETURN_URL_NOT_ALLOWED` (400). Endpoint toggles ใหม่: `Endpoints:ExternalLineChallenge`, `Endpoints:ExternalLineCallback` (auto-hide จาก Swagger คล้าย ThaID).
+- **Login 2FA resend endpoint**: เพิ่ม `POST /auth/login/2fa/resend {email}` — ให้ client ขอ OTP ใหม่ได้หลัง `/auth/login` ตอบ 202 โดยไม่ต้องเริ่ม login ซ้ำ. Silent success ทุกกรณี (กัน account enumeration); คืน 429 `OTP_COOLDOWN_ACTIVE` ถ้ายิงถี่เกิน `ResendCooldownSeconds`. Toggle: `Endpoints:LoginTwoFactorResend`.
+- **Email verify hardening**: `POST /auth/otp/email/verify` เดิม silent success กรณี user verified แล้ว (return 200 OK) — เปลี่ยนเป็นคืน 409 `EMAIL_ALREADY_VERIFIED` เพื่อบอก client ว่าไม่ต้องเรียกซ้ำ. Non-breaking สำหรับ flow ปกติ (user ยังไม่ verify).
 
 ### v1.3.0 — 2026-09-23
 
