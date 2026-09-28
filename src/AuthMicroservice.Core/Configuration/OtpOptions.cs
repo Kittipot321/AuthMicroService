@@ -10,12 +10,23 @@ public sealed class OtpOptions
 
     public int ResendCooldownSeconds { get; set; } = 60;
 
-    public OtpPurposeToggle EmailVerification { get; set; } = new();
+    public EmailVerificationOtpOptions EmailVerification { get; set; } = new();
 
     public OtpPurposeToggle LoginTwoFactor { get; set; } = new();
 }
 
-public sealed class OtpPurposeToggle
+public class OtpPurposeToggle
 {
     public bool Enabled { get; set; } = true;
+}
+
+public sealed class EmailVerificationOtpOptions : OtpPurposeToggle
+{
+    public EmailVerificationDeliveryMode Mode { get; set; } = EmailVerificationDeliveryMode.Link;
+}
+
+public enum EmailVerificationDeliveryMode
+{
+    Link = 0,
+    Code = 1
 }

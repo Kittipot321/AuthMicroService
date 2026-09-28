@@ -125,18 +125,46 @@ internal sealed class AuthService : IAuthService
             return IdentityFailure<AuthResponse>(addRoleResult);
         }
 
-        var verificationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user).ConfigureAwait(false);
+        await DispatchEmailVerificationAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+
+        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+        return AuthResult<AuthResponse>.Success(response);
+    }
+
+    private async Task DispatchEmailVerificationAsync(ApplicationUser user, string? ipAddress, CancellationToken cancellationToken)
+    {
+        var otpOptions = _authOptions.CurrentValue.Otp;
+        var useCode = otpOptions.EmailVerification.Mode == EmailVerificationDeliveryMode.Code
+            && otpOptions.EmailVerification.Enabled;
+
+        if (useCode)
+        {
+            try
+            {
+                var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.EmailVerification, ipAddress, cancellationToken).ConfigureAwait(false);
+                if (generate.Succeeded && generate.Value is not null)
+                {
+                    await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.EmailVerification, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+                _logger.LogWarning("Failed to generate email verification OTP for {Email}: {Error}", user.Email, generate.ErrorMessage);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to send email verification OTP to {Email} — user was still created.", user.Email);
+            }
+            return;
+        }
+
         try
         {
+            var verificationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user).ConfigureAwait(false);
             await _emailService.SendEmailVerificationAsync(user, verificationToken, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to send verification email to {Email} — user was still created.", user.Email);
         }
-
-        var response = await BuildAuthResponseAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
-        return AuthResult<AuthResponse>.Success(response);
     }
 
     public async Task<AuthResult<AuthResponse>> LoginAsync(LoginRequest request, string? ipAddress, CancellationToken cancellationToken = default)
@@ -362,16 +390,7 @@ internal sealed class AuthService : IAuthService
             return AuthResult.Success();
         }
 
-        try
-        {
-            var token = await _userManager.GenerateEmailConfirmationTokenAsync(user).ConfigureAwait(false);
-            await _emailService.SendEmailVerificationAsync(user, token, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to resend verification email to {Email}.", user.Email);
-        }
-
+        await DispatchEmailVerificationAsync(user, ipAddress: null, cancellationToken).ConfigureAwait(false);
         return AuthResult.Success();
     }
 

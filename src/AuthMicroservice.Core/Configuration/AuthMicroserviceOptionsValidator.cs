@@ -229,6 +229,12 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             errors.Add("AuthMicroservice:Otp:ResendCooldownSeconds must be >= 0.");
         }
 
+        if (options.Otp.EmailVerification.Mode == EmailVerificationDeliveryMode.Code
+            && !options.Otp.EmailVerification.Enabled)
+        {
+            errors.Add("AuthMicroservice:Otp:EmailVerification:Enabled must be true when Mode=Code.");
+        }
+
         if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
         {
             errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");
