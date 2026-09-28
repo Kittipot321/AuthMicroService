@@ -17,6 +17,8 @@ public class AuthDbContext : IdentityDbContext<ApplicationUser, ApplicationRole,
 
     public DbSet<OtpCode> OtpCodes => Set<OtpCode>();
 
+    public DbSet<TwoFactorRecoveryCode> TwoFactorRecoveryCodes => Set<TwoFactorRecoveryCode>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

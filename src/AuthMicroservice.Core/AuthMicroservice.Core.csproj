@@ -26,6 +26,9 @@
     <PackageReference Include="MailKit" />
     <PackageReference Include="MimeKit" />
 
+    <PackageReference Include="Otp.NET" />
+    <PackageReference Include="QRCoder" />
+
     <PackageReference Include="Google.Apis.Auth" />
 
     <PackageReference Include="FluentValidation" />

@@ -39,4 +39,11 @@ public static class AuthErrorCodes
     public const string TwoFactorNotEnabled = "TWOFA_NOT_ENABLED";
     public const string TwoFactorAlreadyEnabled = "TWOFA_ALREADY_ENABLED";
     public const string EmailAlreadyVerified = "EMAIL_ALREADY_VERIFIED";
+    public const string TotpNotEnabled = "TOTP_NOT_ENABLED";
+    public const string TotpAlreadyEnabled = "TOTP_ALREADY_ENABLED";
+    public const string TotpNotConfigured = "TOTP_NOT_CONFIGURED";
+    public const string InvalidTotp = "INVALID_TOTP";
+    public const string TotpDisabled = "TOTP_DISABLED";
+    public const string InvalidRecoveryCode = "INVALID_RECOVERY_CODE";
+    public const string RecoveryCodesDisabled = "RECOVERY_CODES_DISABLED";
 }

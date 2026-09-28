@@ -7,6 +7,7 @@ using AuthMicroservice.Core.Services;
 using AuthMicroservice.Core.Services.Abstractions;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -111,6 +112,10 @@ public static class ServiceCollectionExtensions
         services.TryAddScoped<IEmailSender, SmtpEmailSender>();
         services.TryAddScoped<IEmailService, EmailService>();
         services.TryAddScoped<IOtpService, OtpService>();
+        services.TryAddScoped<ITotpService, TotpService>();
+        services.TryAddScoped<IRecoveryCodeService, RecoveryCodeService>();
+
+        ConfigureDataProtection(services, configuration);
         services.TryAddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
         services.AddHttpClient(GoogleOAuthClient.HttpClientName);
         services.TryAddSingleton<IGoogleOAuthClient, GoogleOAuthClient>();
@@ -173,5 +178,30 @@ public static class ServiceCollectionExtensions
         });
 
         return new AuthMicroserviceBuilder(services);
+    }
+
+    private static void ConfigureDataProtection(IServiceCollection services, IConfiguration configuration)
+    {
+        var dp = configuration
+            .GetSection(AuthMicroserviceOptions.SectionName)
+            .GetSection(nameof(AuthMicroserviceOptions.DataProtection))
+            .Get<Configuration.DataProtectionOptions>() ?? new Configuration.DataProtectionOptions();
+
+        var appName = string.IsNullOrWhiteSpace(dp.ApplicationName)
+            ? "AuthMicroservice"
+            : dp.ApplicationName;
+
+        var builder = services.AddDataProtection()
+            .SetApplicationName(appName);
+
+        if (!string.IsNullOrWhiteSpace(dp.KeyRingPath))
+        {
+            var dir = new DirectoryInfo(dp.KeyRingPath);
+            if (!dir.Exists)
+            {
+                dir.Create();
+            }
+            builder.PersistKeysToFileSystem(dir);
+        }
     }
 }

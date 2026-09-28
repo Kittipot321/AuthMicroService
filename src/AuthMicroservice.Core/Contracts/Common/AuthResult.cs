@@ -10,6 +10,8 @@ public class AuthResult
 
     public IReadOnlyDictionary<string, string[]>? ValidationErrors { get; init; }
 
+    public TwoFactorChallenge? TwoFactorChallenge { get; init; }
+
     public static AuthResult Success() => new() { Succeeded = true };
 
     public static AuthResult Failure(string errorCode, string errorMessage) =>
@@ -42,6 +44,14 @@ public sealed class AuthResult<T> : AuthResult
         ErrorMessage = errorMessage
     };
 
+    public static AuthResult<T> Failure(string errorCode, string errorMessage, TwoFactorChallenge challenge) => new()
+    {
+        Succeeded = false,
+        ErrorCode = errorCode,
+        ErrorMessage = errorMessage,
+        TwoFactorChallenge = challenge
+    };
+
     public new static AuthResult<T> Validation(IReadOnlyDictionary<string, string[]> errors) => new()
     {
         Succeeded = false,
@@ -50,3 +60,5 @@ public sealed class AuthResult<T> : AuthResult
         ValidationErrors = errors
     };
 }
+
+public sealed record TwoFactorChallenge(IReadOnlyList<string> Methods, bool EmailChallengeSent, DateTime? EmailCodeExpiresAt);

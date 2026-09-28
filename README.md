@@ -11,7 +11,7 @@ Reusable authentication component for ASP.NET Core 8 — usable **both** as a pl
 - Account lockout after N failed attempts
 - Roles + custom claims (ASP.NET Core Identity underneath) — seed custom roles จาก config, สมัครใน role เฉพาะผ่าน `POST /auth/register` ได้ (ต้องอยู่ใน `AllowedSelfRegisterRoles`)
 - Provider-agnostic EF Core — pick **SqlServer / Postgres / Sqlite / InMemory** in `appsettings.json`
-- Email OTP + login 2FA — ดู [docs/OTP_2FA.md](docs/OTP_2FA.md)
+- Email OTP + login 2FA + **TOTP** (Google Authenticator) + backup recovery codes — ดู [docs/OTP_2FA.md](docs/OTP_2FA.md)
 - External login: Google / Microsoft / Facebook / LINE / ThaID — ดู [docs/EXTERNAL_PROVIDERS.md](docs/EXTERNAL_PROVIDERS.md)
 - All config from `appsettings.json` / env vars — no hardcoded secrets
 - Swagger UI, Dockerfile + docker-compose (with Mailhog), sample consumer, unit + integration tests
@@ -89,11 +89,17 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | POST | `/auth/otp/email/verify` | anon | `{email, code}` — ยืนยัน OTP → set `EmailConfirmed=true` |
 | POST | `/auth/login/2fa/verify` | anon | `{email, code}` — ยืนยัน login OTP หลัง `/auth/login` ตอบ 202 (`TWO_FACTOR_REQUIRED`) |
 | POST | `/auth/login/2fa/resend` | anon | `{email}` — ขอส่ง OTP login 2FA ใหม่. Silent success ทุกกรณี (กัน enumeration); คืน 429 `OTP_COOLDOWN_ACTIVE` ถ้ายิงถี่เกิน |
-| POST | `/auth/2fa/enable-request` | auth | ส่ง OTP ไป email เพื่อเปิด 2FA |
-| POST | `/auth/2fa/enable-confirm` | auth | `{code}` — ยืนยัน OTP → `TwoFactorEnabled=true` |
-| POST | `/auth/2fa/disable` | auth | `{password}` — ปิด 2FA (ต้องยืนยัน password) |
+| POST | `/auth/2fa/enable-request` | auth | ส่ง OTP ไป email เพื่อเปิด **email 2FA** |
+| POST | `/auth/2fa/enable-confirm` | auth | `{code}` — ยืนยัน OTP → `EmailTwoFactorEnabled=true` |
+| POST | `/auth/2fa/disable` | auth | `{password}` — ปิด **email 2FA** (ต้องยืนยัน password) |
+| POST | `/auth/2fa/totp/setup` | auth | เริ่ม enroll **TOTP** (Google Authenticator style) — คืน `otpauthUri` + `qrCodePngBase64` + `secretBase32` |
+| POST | `/auth/2fa/totp/enable-confirm` | auth | `{code}` — ยืนยัน 6-digit code จาก app → `TotpEnabled=true` + คืน **recovery codes** 10 ตัว |
+| POST | `/auth/2fa/totp/disable` | auth | `{password}` — ปิด TOTP (ต้องยืนยัน password), clear secret |
+| POST | `/auth/login/2fa/totp/verify` | anon | `{email, code}` — ยืนยัน TOTP หลัง login ตอบ 202 กับ `methods:["totp"]` |
+| POST | `/auth/login/2fa/recovery/verify` | anon | `{email, code}` — ยืนยัน recovery code เผื่อทำ device หาย (consume ครั้งเดียว) |
+| POST | `/auth/2fa/recovery-codes/generate` | auth | `{password}` — regenerate 10 recovery codes ใหม่ (ยกเลิกชุดเดิม) |
 
-Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` / `EMAIL_ALREADY_VERIFIED` (409), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN` / `INVALID_LINE_STATE` (400) / `LINE_RETURN_URL_NOT_ALLOWED` (400), `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
+Errors follow RFC 7807 ProblemDetails with error codes such as `INVALID_CREDENTIALS`, `USER_LOCKED_OUT`, `INVALID_REFRESH_TOKEN`, `EMAIL_EXISTS_UNVERIFIED`, `INVALID_ROLE` (400 — role requested at register ไม่อยู่ใน `AllowedSelfRegisterRoles` / ไม่มีใน DB), OTP-related: `TWO_FACTOR_REQUIRED` (202 — login สำเร็จแต่ต้อง verify OTP), `INVALID_OTP` / `OTP_EXPIRED` / `OTP_ATTEMPTS_EXCEEDED` (401), `OTP_COOLDOWN_ACTIVE` (429), `OTP_DISABLED` (404), `TWOFA_NOT_ENABLED` / `TWOFA_ALREADY_ENABLED` / `EMAIL_ALREADY_VERIFIED` (409), TOTP/recovery: `INVALID_TOTP` (401) / `INVALID_RECOVERY_CODE` (401), `TOTP_NOT_ENABLED` / `TOTP_ALREADY_ENABLED` / `TOTP_NOT_CONFIGURED` (409), `TOTP_DISABLED` / `RECOVERY_CODES_DISABLED` (404), and per-provider variants: `INVALID_GOOGLE_TOKEN` / `GOOGLE_EMAIL_NOT_VERIFIED`, `INVALID_MICROSOFT_TOKEN`, `INVALID_FACEBOOK_TOKEN` / `FACEBOOK_EMAIL_REQUIRED`, `INVALID_LINE_TOKEN` / `INVALID_LINE_STATE` (400) / `LINE_RETURN_URL_NOT_ALLOWED` (400), `INVALID_THAID_STATE` (400) / `INVALID_THAID_CODE` (401) / `THAID_RETURN_URL_NOT_ALLOWED` (400), plus `{PROVIDER}_LOGIN_DISABLED` (404) when a provider is not enabled.
 
 ## Quick start — standalone via Docker Compose (SQL Server + Mailhog)
 
@@ -293,7 +299,7 @@ MIT — free to use as a base for your own projects.
 Version history อยู่ที่ [CHANGELOG.md](CHANGELOG.md) — ล่าสุด **v1.3.2** (2026-09-25) เปลี่ยน Google login เป็น authorization-code flow (⚠️ breaking — frontend ต้อง migrate ไป `initCodeClient`)
 
 ## Future: Next Plan
-- v1.x candidates: ~~2FA (Email OTP)~~ ✅ / TOTP (authenticator apps) / SMS OTP, external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
+- v1.x candidates: ~~2FA (Email OTP)~~ ✅ / ~~TOTP (authenticator apps)~~ ✅ / SMS OTP, external OAuth providers (~~Google~~ ✅ / ~~Microsoft~~ ✅ / ~~Facebook~~ ✅ / ~~LINE~~ ✅ / ~~ThaID~~ ✅), rate limiting บน /auth/login + /auth/forgot-password, audit log ของ auth events
 - Ops: HealthChecks (DB + SMTP), OpenTelemetry traces, structured logging correlationId
 
 ```

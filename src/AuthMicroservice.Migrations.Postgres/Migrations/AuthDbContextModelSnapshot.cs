@@ -85,6 +85,9 @@ namespace AuthMicroservice.Migrations.Postgres.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("EmailTwoFactorEnabled")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("FullName")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
@@ -119,6 +122,15 @@ namespace AuthMicroservice.Migrations.Postgres.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<string>("SecurityStamp")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("TotpConfirmedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("TotpEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("TotpSecretProtected")
                         .HasColumnType("text");
 
                     b.Property<bool>("TwoFactorEnabled")
@@ -237,6 +249,42 @@ namespace AuthMicroservice.Migrations.Postgres.Migrations
                     b.HasIndex("UserId", "RevokedAt");
 
                     b.ToTable("RefreshTokens", "auth");
+                });
+
+            modelBuilder.Entity("AuthMicroservice.Core.Domain.TwoFactorRecoveryCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Salt")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ConsumedAt");
+
+                    b.ToTable("TwoFactorRecoveryCodes", "auth");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
@@ -364,6 +412,17 @@ namespace AuthMicroservice.Migrations.Postgres.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("AuthMicroservice.Core.Domain.TwoFactorRecoveryCode", b =>
+                {
+                    b.HasOne("AuthMicroservice.Core.Domain.ApplicationUser", "User")
+                        .WithMany("RecoveryCodes")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("AuthMicroservice.Core.Domain.ApplicationRole", null)
@@ -417,6 +476,8 @@ namespace AuthMicroservice.Migrations.Postgres.Migrations
 
             modelBuilder.Entity("AuthMicroservice.Core.Domain.ApplicationUser", b =>
                 {
+                    b.Navigation("RecoveryCodes");
+
                     b.Navigation("RefreshTokens");
                 });
 #pragma warning restore 612, 618

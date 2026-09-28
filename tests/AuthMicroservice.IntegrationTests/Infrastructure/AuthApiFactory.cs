@@ -1,4 +1,5 @@
 using AuthMicroservice.Core.Services.Abstractions;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
@@ -55,6 +56,8 @@ public sealed class AuthApiFactory : WebApplicationFactory<Program>
 
             services.RemoveAll<IThaIdOidcClient>();
             services.AddSingleton<IThaIdOidcClient>(ThaIdOidcClient);
+
+            services.AddDataProtection().UseEphemeralDataProtectionProvider();
         });
     }
 }

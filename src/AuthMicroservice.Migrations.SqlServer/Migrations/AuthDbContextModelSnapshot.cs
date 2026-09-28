@@ -86,6 +86,9 @@ namespace AuthMicroservice.Migrations.SqlServer.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("EmailTwoFactorEnabled")
+                        .HasColumnType("bit");
+
                     b.Property<string>("FullName")
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
@@ -120,6 +123,15 @@ namespace AuthMicroservice.Migrations.SqlServer.Migrations
                         .HasColumnType("bit");
 
                     b.Property<string>("SecurityStamp")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<DateTime?>("TotpConfirmedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("TotpEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("TotpSecretProtected")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("TwoFactorEnabled")
@@ -239,6 +251,42 @@ namespace AuthMicroservice.Migrations.SqlServer.Migrations
                     b.HasIndex("UserId", "RevokedAt");
 
                     b.ToTable("RefreshTokens", "auth");
+                });
+
+            modelBuilder.Entity("AuthMicroservice.Core.Domain.TwoFactorRecoveryCode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Salt")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "ConsumedAt");
+
+                    b.ToTable("TwoFactorRecoveryCodes", "auth");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
@@ -366,6 +414,17 @@ namespace AuthMicroservice.Migrations.SqlServer.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("AuthMicroservice.Core.Domain.TwoFactorRecoveryCode", b =>
+                {
+                    b.HasOne("AuthMicroservice.Core.Domain.ApplicationUser", "User")
+                        .WithMany("RecoveryCodes")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<System.Guid>", b =>
                 {
                     b.HasOne("AuthMicroservice.Core.Domain.ApplicationRole", null)
@@ -419,6 +478,8 @@ namespace AuthMicroservice.Migrations.SqlServer.Migrations
 
             modelBuilder.Entity("AuthMicroservice.Core.Domain.ApplicationUser", b =>
                 {
+                    b.Navigation("RecoveryCodes");
+
                     b.Navigation("RefreshTokens");
                 });
 #pragma warning restore 612, 618

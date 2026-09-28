@@ -6,6 +6,8 @@ public sealed class UserResponse
     public string Email { get; set; } = string.Empty;
     public string? FullName { get; set; }
     public bool EmailConfirmed { get; set; }
+    public bool TwoFactorEnabled { get; set; }
+    public IReadOnlyList<string> TwoFactorMethods { get; set; } = Array.Empty<string>();
     public IReadOnlyList<string> Roles { get; set; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> Claims { get; set; } = new Dictionary<string, string>();
 }

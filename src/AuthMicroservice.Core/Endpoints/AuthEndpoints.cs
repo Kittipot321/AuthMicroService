@@ -139,6 +139,51 @@ public static class AuthEndpoints
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesValidationProblem());
 
+        MapIf(toggles.TotpSetup, swaggerEnabled, () => group.MapPost("/2fa/totp/setup", TotpSetupAsync)
+            .WithName("AuthTotpSetup")
+            .RequireAuthorization()
+            .Produces<TotpSetupResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status404NotFound)
+            .ProducesProblem(StatusCodes.Status409Conflict));
+
+        MapIf(toggles.TotpEnableConfirm, swaggerEnabled, () => group.MapPost("/2fa/totp/enable-confirm", TotpEnableConfirmAsync)
+            .WithName("AuthTotpEnableConfirm")
+            .RequireAuthorization()
+            .Produces<TotpEnableConfirmResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.TotpDisable, swaggerEnabled, () => group.MapPost("/2fa/totp/disable", TotpDisableAsync)
+            .WithName("AuthTotpDisable")
+            .RequireAuthorization()
+            .Produces(StatusCodes.Status204NoContent)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.LoginTotpVerify, swaggerEnabled, () => group.MapPost("/login/2fa/totp/verify", LoginTotpVerifyAsync)
+            .WithName("AuthLoginTotpVerify")
+            .AllowAnonymous()
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.LoginRecoveryCodeVerify, swaggerEnabled, () => group.MapPost("/login/2fa/recovery/verify", LoginRecoveryCodeVerifyAsync)
+            .WithName("AuthLoginRecoveryCodeVerify")
+            .AllowAnonymous()
+            .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesValidationProblem());
+
+        MapIf(toggles.GenerateRecoveryCodes, swaggerEnabled, () => group.MapPost("/2fa/recovery-codes/generate", GenerateRecoveryCodesAsync)
+            .WithName("AuthGenerateRecoveryCodes")
+            .RequireAuthorization()
+            .Produces<RecoveryCodesResponse>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status409Conflict)
+            .ProducesValidationProblem());
+
         MapIf(toggles.Me, swaggerEnabled, () => group.MapGet("/me", GetCurrentUserAsync)
             .WithName("AuthMe")
             .RequireAuthorization()
@@ -322,11 +367,14 @@ public static class AuthEndpoints
         if (result.ErrorCode == AuthErrorCodes.TwoFactorRequired)
         {
             var otp = authOptions.Value.Otp;
+            var challenge = result.TwoFactorChallenge;
             return Results.Json(new TwoFactorRequiredResponse
             {
                 Email = request.Email,
-                ExpiresAt = DateTime.UtcNow.AddMinutes(otp.ExpirationMinutes),
-                Message = result.ErrorMessage ?? "Two-factor verification required."
+                ExpiresAt = challenge?.EmailCodeExpiresAt ?? DateTime.UtcNow.AddMinutes(otp.ExpirationMinutes),
+                Message = result.ErrorMessage ?? "Two-factor verification required.",
+                Methods = challenge?.Methods ?? Array.Empty<string>(),
+                EmailChallengeSent = challenge?.EmailChallengeSent ?? false
             }, statusCode: StatusCodes.Status202Accepted);
         }
 
@@ -799,6 +847,115 @@ public static class AuthEndpoints
         return user is null ? Results.NotFound() : Results.Ok(user);
     }
 
+    private static async Task<IResult> TotpSetupAsync(
+        IAuthService authService,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        var result = await authService.TotpSetupAsync(userId, cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> TotpEnableConfirmAsync(
+        TotpEnableConfirmRequest request,
+        IAuthService authService,
+        IValidator<TotpEnableConfirmRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.TotpEnableConfirmAsync(userId, request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> TotpDisableAsync(
+        TotpDisableRequest request,
+        IAuthService authService,
+        IValidator<TotpDisableRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.TotpDisableAsync(userId, request, cancellationToken);
+        return result.Succeeded ? Results.NoContent() : ToProblem(result);
+    }
+
+    private static async Task<IResult> LoginTotpVerifyAsync(
+        LoginTotpVerifyRequest request,
+        IAuthService authService,
+        IValidator<LoginTotpVerifyRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginTotpVerifyAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> LoginRecoveryCodeVerifyAsync(
+        LoginRecoveryCodeVerifyRequest request,
+        IAuthService authService,
+        IValidator<LoginRecoveryCodeVerifyRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.LoginRecoveryCodeVerifyAsync(request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
+    private static async Task<IResult> GenerateRecoveryCodesAsync(
+        GenerateRecoveryCodesRequest request,
+        IAuthService authService,
+        IValidator<GenerateRecoveryCodesRequest> validator,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        if (ResolveUserId(http) is not { } userId)
+        {
+            return Results.Unauthorized();
+        }
+
+        if (await ValidateAsync(request, validator, cancellationToken) is { } bad)
+        {
+            return bad;
+        }
+
+        var result = await authService.GenerateRecoveryCodesAsync(userId, request, ResolveIp(http), cancellationToken);
+        return result.Succeeded ? Results.Ok(result.Value) : ToProblem(result);
+    }
+
     private static async Task<IResult?> ValidateAsync<T>(T request, IValidator<T> validator, CancellationToken cancellationToken)
     {
         var validation = await validator.ValidateAsync(request, cancellationToken);
@@ -853,6 +1010,13 @@ public static class AuthEndpoints
             AuthErrorCodes.TwoFactorAlreadyEnabled => StatusCodes.Status409Conflict,
             AuthErrorCodes.EmailAlreadyVerified => StatusCodes.Status409Conflict,
             AuthErrorCodes.UserNotFound => StatusCodes.Status404NotFound,
+            AuthErrorCodes.TotpNotEnabled => StatusCodes.Status409Conflict,
+            AuthErrorCodes.TotpAlreadyEnabled => StatusCodes.Status409Conflict,
+            AuthErrorCodes.TotpNotConfigured => StatusCodes.Status409Conflict,
+            AuthErrorCodes.TotpDisabled => StatusCodes.Status404NotFound,
+            AuthErrorCodes.InvalidTotp => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.InvalidRecoveryCode => StatusCodes.Status401Unauthorized,
+            AuthErrorCodes.RecoveryCodesDisabled => StatusCodes.Status404NotFound,
             _ => StatusCodes.Status400BadRequest
         };
 

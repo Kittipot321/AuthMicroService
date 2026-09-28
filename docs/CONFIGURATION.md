@@ -39,6 +39,22 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "EmailVerification": { "Enabled": true },
       "LoginTwoFactor":    { "Enabled": true }
     },
+    "Totp": {
+      "Enabled": true,
+      "Issuer": "AuthMicroservice",          // label ที่แสดงใน authenticator app
+      "Digits": 6,                           // TOTP code length (RFC 6238)
+      "PeriodSeconds": 30,                   // step (Google Authenticator uses 30)
+      "VerificationWindowSteps": 1           // ± steps ยอมรับเพื่อชดเชย clock skew (1 = ±30s)
+    },
+    "RecoveryCodes": {
+      "Enabled": true,
+      "Count": 10,                           // codes generated per set
+      "Length": 10                           // chars per code (before dash separator)
+    },
+    "DataProtection": {
+      "ApplicationName": "AuthMicroservice", // isolates keyring — MUST match across horizontally-scaled instances
+      "KeyRingPath": "/var/auth-keys"        // persist DP keys (used to encrypt TOTP secrets) — leave empty in unit tests
+    },
     "Identity": {
       "Password": { "RequiredLength": 8, "RequireDigit": true, "RequireLowercase": true, "RequireUppercase": true, "RequireNonAlphanumeric": true, "RequiredUniqueChars": 1 },
       "Lockout":  { "AllowedForNewUsers": true, "MaxFailedAccessAttempts": 5, "DefaultLockoutMinutes": 15 },

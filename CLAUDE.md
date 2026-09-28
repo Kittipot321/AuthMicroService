@@ -66,11 +66,14 @@ dotnet ef migrations add <MigrationName> `
 - **DbContext**: [AuthDbContext.cs](src/AuthMicroservice.Core/Data/AuthDbContext.cs) — `IdentityDbContext<ApplicationUser, ApplicationRole, Guid>` + `RefreshTokens`, `OtpCodes` schema `"auth"`
 - **Options pattern**: config bind ไป `AuthMicroserviceOptions` และ sub-options (`DatabaseOptions`, `JwtOptions`, `EmailOptions`, `OtpOptions`, `ExternalProvidersOptions`, `IdentityOptions`, `TokenLinksOptions`, ...)
 - **External providers**: แต่ละเจ้ามี pattern คล้ายกัน — `I{Provider}TokenValidator` สำหรับ token flow (Google/Microsoft/Facebook/LINE), `I{Provider}OAuthClient` สำหรับ backend code exchange (Google), `I{Provider}OidcClient` สำหรับ OIDC challenge/callback flow (LINE/ThaID) เพิ่ม provider ใหม่ = ทำ 3 อย่าง: options class + client/validator interface+impl + endpoint
+- **2FA methods**: มี 2 method ที่อยู่พร้อมกันได้ — **Email OTP** (`user.EmailTwoFactorEnabled`) และ **TOTP** (`user.TotpEnabled`); `user.TwoFactorEnabled` (inherited จาก IdentityUser) เป็น umbrella flag = email OR totp — recompute ทุกครั้งที่ enable/disable แต่ละ method. LoginAsync ตัดสินใจ methods array ตอบ 202 + `emailChallengeSent` ผ่าน `TwoFactorChallenge` record ใน `AuthResult`
+- **TOTP secret storage**: `user.TotpSecretProtected` เก็บ base32 secret ที่ encrypt ด้วย `IDataProtector` (purpose `"AuthMicroservice.TotpSecret"`) — DP keyring persist ผ่าน `DataProtection:KeyRingPath` (Docker = mount volume) ไม่งั้น restart = decrypt เก่าไม่ได้; test ใช้ `UseEphemeralDataProtectionProvider()` ใน `AuthApiFactory`
+- **Recovery codes**: 10 codes ต่อ user, hash+salt เหมือน OTP (`RecoveryCodeService`) — auto-generate ตอน enable TOTP; regenerate ล้าง set เดิม; verify path ที่ `/auth/login/2fa/recovery/verify`
 
 ## Configuration
 
 Full schema อยู่ที่ [src/AuthMicroservice.Api/appsettings.json](src/AuthMicroservice.Api/appsettings.json)
-Sections หลัก: `Database`, `Jwt`, `Email`, `Otp`, `ExternalProviders.{Google,Microsoft,Facebook,Line,ThaId}`, `Identity`, `TokenLinks`, `RoutePrefix`, `EnableSwagger`
+Sections หลัก: `Database`, `Jwt`, `Email`, `Otp`, `Totp`, `RecoveryCodes`, `DataProtection`, `ExternalProviders.{Google,Microsoft,Facebook,Line,ThaId}`, `Identity`, `TokenLinks`, `RoutePrefix`, `EnableSwagger`
 
 ⚠️ **อย่า commit secret จริง** ลง `appsettings.json` (JWT key, SMTP password, OAuth ClientSecret) — ใช้ env var หรือ user-secrets override
 
@@ -98,7 +101,8 @@ Sections หลัก: `Database`, `Jwt`, `Email`, `Otp`, `ExternalProviders.{Go
 1. **AutoMigrate + InMemory** — InMemory ไม่มี migration ต้องเช็ค provider ก่อนเรียก `Database.Migrate()`; ของเดิมจัดการไว้ใน `ApplyAuthMicroserviceMigrationsAsync()` แล้ว
 2. **RefreshToken reuse detection** — token เดิมที่ถูก rotate แล้ว ถ้าโดน replay จะ revoke ทั้ง chain (ดู `RefreshTokenService`); เวลาเขียน test ต้องระวังลำดับ
 3. **OTP cooldown** — endpoints ที่ส่ง OTP มี rate-limit ต่อ email; test ต้อง advance time (มี `IClock` abstraction) หรือใช้ email ใหม่
-4. **RFC 7807 error codes** — errors ใช้ ProblemDetails พร้อม `code` เฉพาะ (`INVALID_CREDENTIALS`, `TWO_FACTOR_REQUIRED`, `OTP_COOLDOWN_ACTIVE`, ...); ดู endpoint table ที่ [README.md](README.md)
+4. **RFC 7807 error codes** — errors ใช้ ProblemDetails พร้อม `code` เฉพาะ (`INVALID_CREDENTIALS`, `TWO_FACTOR_REQUIRED`, `OTP_COOLDOWN_ACTIVE`, `INVALID_TOTP`, `INVALID_RECOVERY_CODE`, ...); ดู endpoint table ที่ [README.md](README.md)
+5. **Data Protection keyring** — production ต้อง persist `KeyRingPath` (Docker volume) ไม่งั้น TOTP secret ที่ encrypt ไว้ก่อน restart จะ decrypt ไม่ได้ = user login ผ่าน TOTP fail; test ทั้งหมด replace ด้วย `UseEphemeralDataProtectionProvider` ที่ `AuthApiFactory`
 
 ## Docs อื่นๆ
 

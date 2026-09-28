@@ -12,6 +12,12 @@ public sealed class AuthMicroserviceOptions
 
     public OtpOptions Otp { get; set; } = new();
 
+    public TotpOptions Totp { get; set; } = new();
+
+    public RecoveryCodeOptions RecoveryCodes { get; set; } = new();
+
+    public DataProtectionOptions DataProtection { get; set; } = new();
+
     public ExternalProvidersOptions ExternalProviders { get; set; } = new();
 
     public IdentitySettings Identity { get; set; } = new();

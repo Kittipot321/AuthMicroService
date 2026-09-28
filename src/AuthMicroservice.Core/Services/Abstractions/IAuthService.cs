@@ -57,4 +57,16 @@ public interface IAuthService
     Task<AuthResult> EnableTwoFactorConfirmAsync(Guid userId, Enable2FaConfirmRequest request, CancellationToken cancellationToken = default);
 
     Task<AuthResult> DisableTwoFactorAsync(Guid userId, Disable2FaRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<TotpSetupResponse>> TotpSetupAsync(Guid userId, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<TotpEnableConfirmResponse>> TotpEnableConfirmAsync(Guid userId, TotpEnableConfirmRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult> TotpDisableAsync(Guid userId, TotpDisableRequest request, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<AuthResponse>> LoginTotpVerifyAsync(LoginTotpVerifyRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<AuthResponse>> LoginRecoveryCodeVerifyAsync(LoginRecoveryCodeVerifyRequest request, string? ipAddress, CancellationToken cancellationToken = default);
+
+    Task<AuthResult<RecoveryCodesResponse>> GenerateRecoveryCodesAsync(Guid userId, GenerateRecoveryCodesRequest request, string? ipAddress, CancellationToken cancellationToken = default);
 }

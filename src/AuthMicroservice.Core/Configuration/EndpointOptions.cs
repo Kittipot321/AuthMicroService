@@ -61,4 +61,10 @@ public sealed class EndpointOptions
     public EndpointToggle TwoFactorEnableRequest { get; set; } = new();
     public EndpointToggle TwoFactorEnableConfirm { get; set; } = new();
     public EndpointToggle TwoFactorDisable { get; set; } = new();
+    public EndpointToggle TotpSetup { get; set; } = new();
+    public EndpointToggle TotpEnableConfirm { get; set; } = new();
+    public EndpointToggle TotpDisable { get; set; } = new();
+    public EndpointToggle LoginTotpVerify { get; set; } = new();
+    public EndpointToggle LoginRecoveryCodeVerify { get; set; } = new();
+    public EndpointToggle GenerateRecoveryCodes { get; set; } = new();
 }
