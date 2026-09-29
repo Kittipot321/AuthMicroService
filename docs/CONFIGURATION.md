@@ -36,8 +36,11 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       "ExpirationMinutes": 10,
       "MaxAttempts": 5,                      // per code, before it's invalidated
       "ResendCooldownSeconds": 60,           // between successive generate calls for same user+purpose
-      "EmailVerification": { "Enabled": true },
       "LoginTwoFactor":    { "Enabled": true }
+    },
+    "EmailVerification": {
+      "Mode": "Link",                        // Link | Code | Disabled — Link/Code = ส่ง verification + บล็อค login ก่อน confirm; Disabled = ไม่ส่ง + ไม่บล็อค
+      "LinkBaseUrl": "https://app.example.com/verify-email"  // required เฉพาะ Mode=Link
     },
     "Totp": {
       "Enabled": true,
@@ -58,7 +61,7 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
     "Identity": {
       "Password": { "RequiredLength": 8, "RequireDigit": true, "RequireLowercase": true, "RequireUppercase": true, "RequireNonAlphanumeric": true, "RequiredUniqueChars": 1 },
       "Lockout":  { "AllowedForNewUsers": true, "MaxFailedAccessAttempts": 5, "DefaultLockoutMinutes": 15 },
-      "SignIn":   { "RequireConfirmedEmail": true, "RequireConfirmedPhoneNumber": false },
+      "SignIn":   { "RequireConfirmedPhoneNumber": false },
       "User":     { "RequireUniqueEmail": true },
       "Roles": {
         "DefaultRegistrationRole": "User",              // role ที่ assign ให้ user ใหม่เมื่อ register ไม่ส่ง `role` field
@@ -69,7 +72,6 @@ The `AuthMicroservice` config section (bind from any `IConfiguration`):
       }
     },
     "TokenLinks": {
-      "EmailVerificationBaseUrl": "https://app.example.com/verify-email",
       "PasswordResetBaseUrl": "https://app.example.com/reset-password"
     },
     "ExternalProviders": {

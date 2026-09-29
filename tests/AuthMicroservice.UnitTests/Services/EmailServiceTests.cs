@@ -27,8 +27,12 @@ public class EmailServiceTests
             },
             TokenLinks = new TokenLinkOptions
             {
-                EmailVerificationBaseUrl = "https://app.example.com/verify",
                 PasswordResetBaseUrl = "https://app.example.com/reset"
+            },
+            EmailVerification = new EmailVerificationOptions
+            {
+                Mode = EmailVerificationMode.Link,
+                LinkBaseUrl = "https://app.example.com/verify"
             }
         });
         return (new EmailService(sender.Object, options), sender);

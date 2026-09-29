@@ -1,3 +1,5 @@
+using AuthMicroservice.Core.Configuration;
+
 namespace AuthMicroservice.Core.Contracts.Common;
 
 public class AuthResult
@@ -11,6 +13,8 @@ public class AuthResult
     public IReadOnlyDictionary<string, string[]>? ValidationErrors { get; init; }
 
     public TwoFactorChallenge? TwoFactorChallenge { get; init; }
+
+    public EmailVerificationChallenge? EmailVerificationChallenge { get; init; }
 
     public static AuthResult Success() => new() { Succeeded = true };
 
@@ -52,6 +56,14 @@ public sealed class AuthResult<T> : AuthResult
         TwoFactorChallenge = challenge
     };
 
+    public static AuthResult<T> Failure(string errorCode, string errorMessage, EmailVerificationChallenge? challenge) => new()
+    {
+        Succeeded = false,
+        ErrorCode = errorCode,
+        ErrorMessage = errorMessage,
+        EmailVerificationChallenge = challenge
+    };
+
     public new static AuthResult<T> Validation(IReadOnlyDictionary<string, string[]> errors) => new()
     {
         Succeeded = false,
@@ -62,3 +74,5 @@ public sealed class AuthResult<T> : AuthResult
 }
 
 public sealed record TwoFactorChallenge(IReadOnlyList<string> Methods, bool EmailChallengeSent, DateTime? EmailCodeExpiresAt);
+
+public sealed record EmailVerificationChallenge(EmailVerificationMode Mode, bool VerificationSent, DateTime? ExpiresAt);

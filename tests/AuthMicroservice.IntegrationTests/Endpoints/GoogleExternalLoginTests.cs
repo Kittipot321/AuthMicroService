@@ -123,7 +123,7 @@ public class GoogleExternalLoginTests : IClassFixture<AuthApiFactory>
         register.StatusCode.Should().Be(HttpStatusCode.Created);
         var registered = await register.Content.ReadFromJsonAsync<AuthResponse>();
 
-        // In the test config RequireConfirmedEmail=false, but the register flow does NOT set
+        // In the test config EmailVerification.Mode=Disabled, but the register flow does NOT set
         // EmailConfirmed=true. Simulate email confirmation by calling /auth/verify-email with a
         // freshly generated token via UserManager (accessed through the API's DI).
         await ConfirmEmailAsync(email);

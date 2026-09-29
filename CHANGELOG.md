@@ -2,6 +2,21 @@
 
 All notable changes to **AuthMicroservice** are documented in this file.
 
+## Unreleased (feature/v1.3)
+
+- **⚠️ Breaking — EmailVerification config consolidation**: ย้าย 3 config path เดิมไปรวมเป็น section เดียว `AuthMicroservice:EmailVerification` — controlled ด้วย property เดียว `Mode`:
+  - `Otp:EmailVerification:{Enabled, Mode}` → `EmailVerification:Mode` (tri-state enum `Link | Code | Disabled`; `Enabled=false` เดิม = `Mode=Disabled` ใหม่)
+  - `TokenLinks:EmailVerificationBaseUrl` → `EmailVerification:LinkBaseUrl`
+  - `Identity:SignIn:RequireConfirmedEmail` — ลบทิ้ง, derive จาก `Mode` โดยอัตโนมัติ (`Mode != Disabled` = บล็อค login จน confirm)
+
+  **เหตุผล**: setting เดิมกระจาย 3 ที่ + `Enabled × Mode` truth table กำกวม (เช่น default `Enabled=true + Mode=Link` เปิด OTP endpoints แต่ dispatch เป็น link → verify-otp คืน `INVALID_OTP` แทน `OTP_DISABLED`). โครงใหม่ mutually exclusive ตัด edge case ทิ้ง + endpoint gate ใช้ `Mode == Code` แทน `Enabled` — `/auth/otp/email/*` คืน `OTP_DISABLED` ทันทีเมื่อ Mode=Link/Disabled. `Mode` เป็น single source of truth ทั้ง dispatch behavior และ login-gate — ไม่มี `Required` flag แยก (ไม่มี use case จริงสำหรับ "ส่ง verification แต่ไม่บล็อค login").
+
+  **Validator ใหม่**: `LinkBaseUrl` required เฉพาะเมื่อ `Mode=Link`.
+
+  **API contract**: `EmailVerificationChallenge.Mode` และ `EmailVerificationRequiredResponse.Mode` เปลี่ยน type `string` → enum `EmailVerificationMode` — JSON output ยังเป็น camelCase (`"link"`, `"code"`, `"disabled"`) ผ่าน `JsonStringEnumConverter(JsonNamingPolicy.CamelCase)` ที่ผูกกับ enum โดยตรง. Static class `EmailVerificationModeNames` ถูกลบ (ให้ใช้ enum ตรงๆ).
+
+- **Login on unverified email**: `POST /auth/login` เดิมคืน 403 `EMAIL_NOT_CONFIRMED` แบบ ProblemDetails ธรรมดา — client แยกไม่ออกว่า `EmailVerification:Mode` ตั้งเป็น `Link` หรือ `Code` ทำให้ route หน้า UI ยาก. เปลี่ยนเป็น **202 `EmailVerificationRequiredResponse`** `{ email, mode, message, verificationSent, expiresAt }` (mirror pattern ของ `TWO_FACTOR_REQUIRED`) พร้อม auto-resend verification email/OTP ให้เลย. Code mode ได้ cooldown enforcement จาก `OtpService` (verificationSent=false ถ้ายังอยู่ใน `ResendCooldownSeconds`). Link mode ยังไม่มี cooldown (pre-existing limitation ของ `/resend-verification`).
+
 ## v1.3.2 — 2026-09-25
 
 - **Google login: token-exchange → authorization-code flow** (⚠️ breaking): `POST /auth/external/google` เปลี่ยน request body จาก `{ "idToken": "..." }` เป็น `{ "code": "..." }` — frontend ต้อง migrate จาก GSI credential response ไปใช้ `google.accounts.oauth2.initCodeClient({ ux_mode: 'popup', ... })` (popup flow) ที่คืน authorization code. Backend แลก code กับ `https://oauth2.googleapis.com/token` ด้วย `redirect_uri=postmessage` เอา `id_token` มา validate ผ่าน Google JWKS เอง — `ClientSecret` ไม่หลุดไปฝั่ง frontend.

@@ -17,17 +17,19 @@ internal sealed class EmailService : IEmailService
     private readonly IEmailSender _sender;
     private readonly EmailOptions _emailOptions;
     private readonly TokenLinkOptions _linkOptions;
+    private readonly EmailVerificationOptions _evOptions;
 
     public EmailService(IEmailSender sender, IOptions<AuthMicroserviceOptions> options)
     {
         _sender = sender;
         _emailOptions = options.Value.Email;
         _linkOptions = options.Value.TokenLinks;
+        _evOptions = options.Value.EmailVerification;
     }
 
     public Task SendEmailVerificationAsync(ApplicationUser user, string token, CancellationToken cancellationToken = default)
     {
-        var link = BuildLink(_linkOptions.EmailVerificationBaseUrl, ("userId", user.Id.ToString()), ("token", token));
+        var link = BuildLink(_evOptions.LinkBaseUrl, ("userId", user.Id.ToString()), ("token", token));
         var body = RenderLink(VerifyTemplate.Value, user, link);
         return _sender.SendAsync(user.Email ?? string.Empty, _emailOptions.Templates.VerifyEmailSubject, body, cancellationToken);
     }

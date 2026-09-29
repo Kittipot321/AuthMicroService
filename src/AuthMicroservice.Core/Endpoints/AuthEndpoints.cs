@@ -42,6 +42,7 @@ public static class AuthEndpoints
             .WithName("AuthLogin")
             .AllowAnonymous()
             .Produces<AuthResponse>(StatusCodes.Status200OK)
+            .Produces<EmailVerificationRequiredResponse>(StatusCodes.Status202Accepted)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status423Locked));
@@ -375,6 +376,19 @@ public static class AuthEndpoints
                 Message = result.ErrorMessage ?? "Two-factor verification required.",
                 Methods = challenge?.Methods ?? Array.Empty<string>(),
                 EmailChallengeSent = challenge?.EmailChallengeSent ?? false
+            }, statusCode: StatusCodes.Status202Accepted);
+        }
+
+        if (result.ErrorCode == AuthErrorCodes.EmailNotConfirmed)
+        {
+            var challenge = result.EmailVerificationChallenge;
+            return Results.Json(new EmailVerificationRequiredResponse
+            {
+                Email = request.Email,
+                Mode = challenge?.Mode ?? EmailVerificationMode.Link,
+                Message = result.ErrorMessage ?? "Email verification required.",
+                VerificationSent = challenge?.VerificationSent ?? false,
+                ExpiresAt = challenge?.ExpiresAt
             }, statusCode: StatusCodes.Status202Accepted);
         }
 

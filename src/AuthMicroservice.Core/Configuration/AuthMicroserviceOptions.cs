@@ -12,6 +12,8 @@ public sealed class AuthMicroserviceOptions
 
     public OtpOptions Otp { get; set; } = new();
 
+    public EmailVerificationOptions EmailVerification { get; set; } = new();
+
     public TotpOptions Totp { get; set; } = new();
 
     public RecoveryCodeOptions RecoveryCodes { get; set; } = new();

@@ -131,21 +131,29 @@ internal sealed class AuthService : IAuthService
         return AuthResult<AuthResponse>.Success(response);
     }
 
-    private async Task DispatchEmailVerificationAsync(ApplicationUser user, string? ipAddress, CancellationToken cancellationToken)
+    private async Task<EmailVerificationChallenge?> DispatchEmailVerificationAsync(ApplicationUser user, string? ipAddress, CancellationToken cancellationToken)
     {
-        var otpOptions = _authOptions.CurrentValue.Otp;
-        var useCode = otpOptions.EmailVerification.Mode == EmailVerificationDeliveryMode.Code
-            && otpOptions.EmailVerification.Enabled;
+        var authOptions = _authOptions.CurrentValue;
+        var mode = authOptions.EmailVerification.Mode;
 
-        if (useCode)
+        if (mode == EmailVerificationMode.Disabled)
         {
+            return null;
+        }
+
+        if (mode == EmailVerificationMode.Code)
+        {
+            var otpOptions = authOptions.Otp;
             try
             {
                 var generate = await _otpService.GenerateAsync(user.Id, OtpPurpose.EmailVerification, ipAddress, cancellationToken).ConfigureAwait(false);
                 if (generate.Succeeded && generate.Value is not null)
                 {
                     await _emailService.SendOtpAsync(user, generate.Value, OtpPurpose.EmailVerification, otpOptions.ExpirationMinutes, cancellationToken).ConfigureAwait(false);
-                    return;
+                    return new EmailVerificationChallenge(
+                        EmailVerificationMode.Code,
+                        VerificationSent: true,
+                        ExpiresAt: _clock.UtcNow.AddMinutes(otpOptions.ExpirationMinutes));
                 }
                 _logger.LogWarning("Failed to generate email verification OTP for {Email}: {Error}", user.Email, generate.ErrorMessage);
             }
@@ -153,17 +161,19 @@ internal sealed class AuthService : IAuthService
             {
                 _logger.LogWarning(ex, "Failed to send email verification OTP to {Email} — user was still created.", user.Email);
             }
-            return;
+            return new EmailVerificationChallenge(EmailVerificationMode.Code, VerificationSent: false, ExpiresAt: null);
         }
 
         try
         {
             var verificationToken = await _userManager.GenerateEmailConfirmationTokenAsync(user).ConfigureAwait(false);
             await _emailService.SendEmailVerificationAsync(user, verificationToken, cancellationToken).ConfigureAwait(false);
+            return new EmailVerificationChallenge(EmailVerificationMode.Link, VerificationSent: true, ExpiresAt: null);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to send verification email to {Email} — user was still created.", user.Email);
+            return new EmailVerificationChallenge(EmailVerificationMode.Link, VerificationSent: false, ExpiresAt: null);
         }
     }
 
@@ -184,7 +194,11 @@ internal sealed class AuthService : IAuthService
 
         if (signIn.IsNotAllowed)
         {
-            return AuthResult<AuthResponse>.Failure(AuthErrorCodes.EmailNotConfirmed, "Email address has not been confirmed.");
+            var challenge = await DispatchEmailVerificationAsync(user, ipAddress, cancellationToken).ConfigureAwait(false);
+            return AuthResult<AuthResponse>.Failure(
+                AuthErrorCodes.EmailNotConfirmed,
+                "Email address has not been confirmed.",
+                challenge);
         }
 
         if (!signIn.Succeeded)
@@ -1100,11 +1114,13 @@ internal sealed class AuthService : IAuthService
 
     public async Task<AuthResult<TwoFactorRequiredResponse>> SendEmailVerificationOtpAsync(SendEmailVerificationOtpRequest request, string? ipAddress, CancellationToken cancellationToken = default)
     {
-        var otpOptions = _authOptions.CurrentValue.Otp;
-        if (!otpOptions.EmailVerification.Enabled)
+        var authOptions = _authOptions.CurrentValue;
+        if (authOptions.EmailVerification.Mode != EmailVerificationMode.Code)
         {
             return AuthResult<TwoFactorRequiredResponse>.Failure(AuthErrorCodes.OtpDisabled, "Email verification via OTP is disabled.");
         }
+
+        var otpOptions = authOptions.Otp;
 
         var user = await _userManager.FindByEmailAsync(request.Email).ConfigureAwait(false);
         var silent = AuthResult<TwoFactorRequiredResponse>.Success(new TwoFactorRequiredResponse
@@ -1143,7 +1159,7 @@ internal sealed class AuthService : IAuthService
 
     public async Task<AuthResult> VerifyEmailWithOtpAsync(VerifyEmailOtpRequest request, CancellationToken cancellationToken = default)
     {
-        if (!_authOptions.CurrentValue.Otp.EmailVerification.Enabled)
+        if (_authOptions.CurrentValue.EmailVerification.Mode != EmailVerificationMode.Code)
         {
             return AuthResult.Failure(AuthErrorCodes.OtpDisabled, "Email verification via OTP is disabled.");
         }

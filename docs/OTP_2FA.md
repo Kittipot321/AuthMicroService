@@ -191,7 +191,7 @@ curl -X POST http://localhost:8080/auth/otp/email/verify -H "Content-Type: appli
 | `Endpoints:LoginTotpVerify.Enabled` | `true` | ปิด → route `/auth/login/2fa/totp/verify` ไม่ถูก map |
 | `Endpoints:LoginRecoveryCodeVerify.Enabled` | `true` | ปิด → route `/auth/login/2fa/recovery/verify` ไม่ถูก map |
 | `Endpoints:GenerateRecoveryCodes.Enabled` | `true` | ปิด → route `/auth/2fa/recovery-codes/generate` ไม่ถูก map |
-| `Otp:EmailVerification.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` (route ยังอยู่) |
+| `EmailVerification:Mode` (`Link` \| `Code` \| `Disabled`) | `Link` | Code = เปิด OTP endpoints; Link/Disabled = OTP endpoints ตอบ 404 `OTP_DISABLED` (route ยังอยู่) |
 | `Otp:LoginTwoFactor.Enabled` | `true` | ปิด → handler ตอบ 404 `OTP_DISABLED` — user ที่มี `TwoFactorEnabled=true` login ไม่ผ่าน 2FA แล้ว ระวังก่อนปิด |
 | `Totp.Enabled` | `true` | ปิด → handler ตอบ 404 `TOTP_DISABLED` (route ยังอยู่); user ที่มี TotpEnabled=true จะ verify ผ่าน TOTP ไม่ได้ |
 | `RecoveryCodes.Enabled` | `true` | ปิด → handler ตอบ 404 `RECOVERY_CODES_DISABLED`; enroll TOTP จะไม่ auto-generate codes |
@@ -204,8 +204,11 @@ curl -X POST http://localhost:8080/auth/otp/email/verify -H "Content-Type: appli
   "ExpirationMinutes": 10,       // > 0
   "MaxAttempts": 5,              // ก่อน mark consumed + คืน OTP_ATTEMPTS_EXCEEDED
   "ResendCooldownSeconds": 60,   // ก่อนขอ code ใหม่ได้ — คืน 429 OTP_COOLDOWN_ACTIVE
-  "EmailVerification": { "Enabled": true },
   "LoginTwoFactor":    { "Enabled": true }
+},
+"EmailVerification": {
+  "Mode": "Link",                // Link | Code | Disabled — Code เท่านั้นที่เปิด /auth/otp/email/*; Link/Code = บล็อค login ก่อน confirm; Disabled = ไม่ส่ง + ไม่บล็อค
+  "LinkBaseUrl": "https://app.example.com/verify-email"  // required เฉพาะ Mode=Link
 },
 "Totp": {
   "Enabled": true,

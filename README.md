@@ -66,7 +66,7 @@ Add the `AuthMicroservice` section to your `appsettings.json` — see [`src/Auth
 | Method | Route | Auth | Notes |
 |---|---|---|---|
 | POST | `/auth/register` | anon | 201 with tokens; sends verification email. Optional `role` field — ต้องอยู่ใน `AllowedSelfRegisterRoles` (ไม่งั้น 400 `INVALID_ROLE`) |
-| POST | `/auth/login` | anon | 200 tokens · 401 bad creds · 403 unconfirmed · 423 lockout |
+| POST | `/auth/login` | anon | 200 tokens · 202 `EmailVerificationRequiredResponse { mode, verificationSent, expiresAt }` เมื่อ email ยังไม่ verify (auto-resend ตาม `EmailVerification:Mode`) · 401 bad creds · 423 lockout |
 | POST | `/auth/refresh` | anon | Rotates refresh; old refresh replay → 401 |
 | POST | `/auth/logout` | auth | Revokes one refresh token |
 | POST | `/auth/logout-all` | auth | Revokes all refresh tokens for user |

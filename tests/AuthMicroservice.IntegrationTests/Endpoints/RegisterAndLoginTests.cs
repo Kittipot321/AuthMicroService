@@ -34,9 +34,6 @@ public class RegisterAndLoginTests : IClassFixture<AuthApiFactory>
         registerBody!.AccessToken.Should().NotBeNullOrEmpty();
         registerBody.RefreshToken.Should().NotBeNullOrEmpty();
 
-        // Verification email was captured.
-        _factory.EmailSender.Messages.Should().ContainSingle(m => m.To == email);
-
         var login = await client.PostAsJsonAsync("/auth/login", new LoginRequest { Email = email, Password = "P@ssw0rd!" });
         login.StatusCode.Should().Be(HttpStatusCode.OK);
         var loginBody = await login.Content.ReadFromJsonAsync<AuthResponse>();

@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using AuthMicroservice.Core.Configuration;
 using AuthMicroservice.Core.Data;
 using AuthMicroservice.Core.Domain;
@@ -48,6 +50,10 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton<IValidateOptions<AuthMicroserviceOptions>, AuthMicroserviceOptionsValidator>();
 
+        services.ConfigureHttpJsonOptions(o =>
+            o.SerializerOptions.Converters.Add(
+                new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
+
         services.AddHttpContextAccessor();
         services.TryAddSingleton<IClock, SystemClock>();
         services.TryAddScoped<ICurrentUserService, CurrentUserService>();
@@ -74,7 +80,7 @@ public static class ServiceCollectionExtensions
                 o.Lockout.MaxFailedAccessAttempts = s.Lockout.MaxFailedAccessAttempts;
                 o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(s.Lockout.DefaultLockoutMinutes);
 
-                o.SignIn.RequireConfirmedEmail = s.SignIn.RequireConfirmedEmail;
+                o.SignIn.RequireConfirmedEmail = auth.Value.EmailVerification.Mode != EmailVerificationMode.Disabled;
                 o.SignIn.RequireConfirmedPhoneNumber = s.SignIn.RequireConfirmedPhoneNumber;
 
                 o.User.RequireUniqueEmail = s.User.RequireUniqueEmail;

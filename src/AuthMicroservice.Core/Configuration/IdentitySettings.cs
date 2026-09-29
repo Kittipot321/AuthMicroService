@@ -39,8 +39,6 @@ public sealed class LockoutSettings
 
 public sealed class SignInSettings
 {
-    public bool RequireConfirmedEmail { get; set; } = true;
-
     public bool RequireConfirmedPhoneNumber { get; set; }
 }
 

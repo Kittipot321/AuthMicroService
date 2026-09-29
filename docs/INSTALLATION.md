@@ -114,8 +114,11 @@ Minimum viable config (SQLite, ไม่ใช้ email) — paste ทั้ง�
       "Enabled": false                        // ปิด → /verify-email, /forgot-password endpoints คืน 404
     },
     "TokenLinks": {
-      "EmailVerificationBaseUrl": "https://app.example.com/verify-email",
       "PasswordResetBaseUrl": "https://app.example.com/reset-password"
+    },
+    "EmailVerification": {
+      "Mode": "Link",                         // Link | Code | Disabled — Link/Code = ส่ง verification + บล็อค login; Disabled = ไม่ส่ง + ไม่บล็อค
+      "LinkBaseUrl": "https://app.example.com/verify-email"  // required เฉพาะ Mode=Link
     }
   }
 }
@@ -130,7 +133,8 @@ Minimum viable config (SQLite, ไม่ใช้ email) — paste ทั้ง�
 | `Jwt.Key` < 32 chars หรือว่าง | `AuthMicroservice:Jwt:Key must be set and at least 32 characters long.` |
 | `Email.Enabled=true` แต่ไม่มี `Smtp.Host` / `FromAddress` | error รายบรรทัด |
 | External provider `Enabled=true` แต่ไม่มี credentials | error รายบรรทัด |
-| `TokenLinks.EmailVerificationBaseUrl` หรือ `PasswordResetBaseUrl` ว่าง | required (ต้องมีทั้งคู่ แม้ปิด Email ก็ตาม) |
+| `EmailVerification.LinkBaseUrl` ว่างเมื่อ `Mode=Link` | required เฉพาะเมื่อใช้ link mode |
+| `TokenLinks.PasswordResetBaseUrl` ว่าง | required (แม้ปิด Email ก็ตาม) |
 | `Identity:Roles:AdditionalRoles[i]:Name` ว่าง / ชนกับ system role (`Admin`/`User`) / duplicate | error รายบรรทัด |
 | `Identity:Roles:DefaultRegistrationRole` หรือ entry ใน `AllowedSelfRegisterRoles` ชี้ไป role ที่ไม่มีจริง (system หรือ `AdditionalRoles`) | error รายบรรทัด |
 
@@ -342,7 +346,8 @@ Invoke-RestMethod -Method POST -Uri http://localhost:8080/auth/register `
 |---|---|
 | Startup ตายพร้อม error `AuthMicroservice:Jwt:Key must be set and at least 32 characters long.` | Set `AuthMicroservice__Jwt__Key` env var (ยาว >= 32 chars) |
 | Startup ตายพร้อม `Unsupported provider '...'` | `AuthMicroservice:Database:Provider` ต้องเป็น 1 ใน `SqlServer` / `Postgres` / `Sqlite` / `InMemory` (case-sensitive) |
-| Startup ตายพร้อม `EmailVerificationBaseUrl is required` | ต้องตั้ง `TokenLinks.EmailVerificationBaseUrl` + `TokenLinks.PasswordResetBaseUrl` ทั้งคู่ **แม้ปิด Email** (validator ตรวจก่อนดู `Email.Enabled`) |
+| Startup ตายพร้อม `EmailVerification:LinkBaseUrl is required when Mode=Link` | ตั้ง `AuthMicroservice:EmailVerification:LinkBaseUrl` หรือเปลี่ยน `Mode=Code`/`Disabled` |
+| Startup ตายพร้อม `TokenLinks:PasswordResetBaseUrl is required` | ตั้ง `TokenLinks.PasswordResetBaseUrl` (required เสมอ แม้ปิด Email) |
 | `/auth/register` คืน 500 + log บอก DB error | เช็ค `ConnectionString` + DB ต้อง running แล้ว (โดยเฉพาะ SQL Server / Postgres) |
 | Migrations ไม่ apply แต่ startup ผ่าน | ลืมเรียก `await app.ApplyAuthMicroserviceMigrationsAsync()` ก่อน `app.Run()` |
 | External login คืน 409 `EMAIL_EXISTS_UNVERIFIED` | มี local user email เดียวกัน แต่ยังไม่ verify — ยิง `/auth/verify-email` ให้ user นั้นก่อน (กัน account takeover ผ่าน unverified email) |

@@ -5,25 +5,43 @@ using System.Text.RegularExpressions;
 using AuthMicroservice.Core.Contracts.Common;
 using AuthMicroservice.Core.Contracts.Requests;
 using AuthMicroservice.Core.Contracts.Responses;
+using AuthMicroservice.Core.Domain;
 using AuthMicroservice.IntegrationTests.Infrastructure;
 using FluentAssertions;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AuthMicroservice.IntegrationTests.Endpoints;
 
-public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
+public class OtpEndpointsTests : IClassFixture<AuthApiFactory>, IDisposable
 {
     private readonly AuthApiFactory _factory;
+    private readonly WebApplicationFactory<Program> _otpFactory;
 
     public OtpEndpointsTests(AuthApiFactory factory)
     {
         _factory = factory;
+        _otpFactory = factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["AuthMicroservice:EmailVerification:Mode"] = "Code"
+                });
+            });
+        });
     }
+
+    public void Dispose() => _otpFactory.Dispose();
 
     [Fact]
     public async Task EmailVerification_SendAndVerifyOtp_ConfirmsEmail()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-email-{Guid.NewGuid():N}@example.com";
 
         await client.PostAsJsonAsync("/auth/register", new RegisterRequest
@@ -58,7 +76,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task VerifyEmailOtp_WrongCode_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-wrong-{Guid.NewGuid():N}@example.com";
 
         await client.PostAsJsonAsync("/auth/register", new RegisterRequest
@@ -80,7 +98,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginWith2FaEnabled_ReturnsAccepted_ThenOtpVerifyReturnsTokens()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -104,6 +122,11 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
         enableConfirm.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
         client.DefaultRequestHeaders.Authorization = null;
+        _factory.EmailSender.Clear();
+
+        // Under Mode=Code the user is unconfirmed after register; without this the next /auth/login
+        // returns the EmailVerification challenge instead of the 2FA challenge.
+        await ConfirmEmailAsync(email);
 
         var login = await client.PostAsJsonAsync("/auth/login", new LoginRequest
         {
@@ -131,7 +154,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task Disable2Fa_WithWrongPassword_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-disable-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -156,7 +179,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task SendOtp_ForNonexistentEmail_ReturnsOk_SilentSuccess()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
 
         var send = await client.PostAsJsonAsync("/auth/otp/email/send", new SendEmailVerificationOtpRequest
         {
@@ -171,7 +194,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task Enable2Fa_Confirm_WithInvalidCode_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-enable-bad-{Guid.NewGuid():N}@example.com";
 
         var register = await client.PostAsJsonAsync("/auth/register", new RegisterRequest
@@ -193,7 +216,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorVerify_WithWrongCode_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-wrong-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -218,7 +241,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorVerify_ReplayAfterSuccess_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-replay-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -253,7 +276,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorVerify_When2FaNotEnabled_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-nosession-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -275,17 +298,34 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorVerify_WithEmailVerificationCode_ReturnsUnauthorized()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-crosspurpose-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
-        await EnableTwoFactorAsync(client, email, password);
+        // Inline the enable-2FA flow so we can grab an EmailVerification OTP *before* confirming
+        // the email (once EmailConfirmed=true, /auth/otp/email/send silent-successes without sending).
+        var register = await client.PostAsJsonAsync("/auth/register", new RegisterRequest
+        {
+            Email = email,
+            Password = password
+        });
+        var tokens = await register.Content.ReadFromJsonAsync<AuthResponse>();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", tokens!.AccessToken);
 
         _factory.EmailSender.Clear();
+        await client.PostAsync("/auth/2fa/enable-request", content: null);
+        var enableCode = ExtractCode(_factory.EmailSender.Messages.Should().ContainSingle().Subject.HtmlBody);
+        await client.PostAsJsonAsync("/auth/2fa/enable-confirm", new Enable2FaConfirmRequest { Code = enableCode! });
+
+        client.DefaultRequestHeaders.Authorization = null;
+        _factory.EmailSender.Clear();
+
         var sendEmailVerification = await client.PostAsJsonAsync("/auth/otp/email/send", new SendEmailVerificationOtpRequest { Email = email });
         sendEmailVerification.StatusCode.Should().Be(HttpStatusCode.OK);
         var emailVerificationCode = ExtractCode(_factory.EmailSender.Messages.Should().ContainSingle().Subject.HtmlBody);
         emailVerificationCode.Should().NotBeNullOrEmpty();
+
+        await ConfirmEmailAsync(email);
 
         _factory.EmailSender.Clear();
         var login = await client.PostAsJsonAsync("/auth/login", new LoginRequest
@@ -307,7 +347,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task Enable2FaRequest_WhenAlreadyEnabled_ReturnsConflict()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-dup-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -332,7 +372,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task Disable2Fa_WithCorrectPassword_ReturnsNoContent()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-disable-ok-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -357,7 +397,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task Disable2Fa_When2FaNotEnabled_ReturnsConflict()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-disable-noop-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -377,7 +417,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorResend_IssuesNewCode_AndOldCodeIsInvalidated()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-resend-{Guid.NewGuid():N}@example.com";
         const string password = "P@ssw0rd!";
 
@@ -418,7 +458,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorResend_ForUserWithout2FaEnabled_ReturnsOk_SilentSuccess()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
         var email = $"otp-2fa-resend-no2fa-{Guid.NewGuid():N}@example.com";
 
         await client.PostAsJsonAsync("/auth/register", new RegisterRequest
@@ -437,7 +477,7 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
     public async Task LoginTwoFactorResend_ForNonexistentEmail_ReturnsOk_SilentSuccess()
     {
         _factory.EmailSender.Clear();
-        var client = _factory.CreateClient();
+        var client = _otpFactory.CreateClient();
 
         var resend = await client.PostAsJsonAsync("/auth/login/2fa/resend", new SendLoginTwoFactorOtpRequest
         {
@@ -465,6 +505,21 @@ public class OtpEndpointsTests : IClassFixture<AuthApiFactory>
 
         client.DefaultRequestHeaders.Authorization = null;
         _factory.EmailSender.Clear();
+
+        // Under Mode=Code the user is unconfirmed after register; without this the next /auth/login
+        // returns the EmailVerification challenge instead of the 2FA challenge that these tests need.
+        await ConfirmEmailAsync(email);
+    }
+
+    private async Task ConfirmEmailAsync(string email)
+    {
+        using var scope = _otpFactory.Services.CreateScope();
+        var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+        var user = await userManager.FindByEmailAsync(email);
+        user.Should().NotBeNull();
+        var token = await userManager.GenerateEmailConfirmationTokenAsync(user!);
+        var result = await userManager.ConfirmEmailAsync(user!, token);
+        result.Succeeded.Should().BeTrue();
     }
 
     private static string? ExtractCode(string html)

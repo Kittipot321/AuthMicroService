@@ -229,15 +229,10 @@ internal sealed class AuthMicroserviceOptionsValidator : IValidateOptions<AuthMi
             errors.Add("AuthMicroservice:Otp:ResendCooldownSeconds must be >= 0.");
         }
 
-        if (options.Otp.EmailVerification.Mode == EmailVerificationDeliveryMode.Code
-            && !options.Otp.EmailVerification.Enabled)
+        var ev = options.EmailVerification;
+        if (ev.Mode == EmailVerificationMode.Link && string.IsNullOrWhiteSpace(ev.LinkBaseUrl))
         {
-            errors.Add("AuthMicroservice:Otp:EmailVerification:Enabled must be true when Mode=Code.");
-        }
-
-        if (string.IsNullOrWhiteSpace(options.TokenLinks.EmailVerificationBaseUrl))
-        {
-            errors.Add("AuthMicroservice:TokenLinks:EmailVerificationBaseUrl is required.");
+            errors.Add("AuthMicroservice:EmailVerification:LinkBaseUrl is required when Mode=Link.");
         }
 
         if (string.IsNullOrWhiteSpace(options.TokenLinks.PasswordResetBaseUrl))

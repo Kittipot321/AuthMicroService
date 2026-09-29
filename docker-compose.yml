@@ -36,7 +36,7 @@ services:
       AuthMicroservice__Jwt__Key: "${JWT_KEY:?Set JWT_KEY (>= 32 chars) in .env or environment}"
       AuthMicroservice__Jwt__Issuer: "AuthMicroservice"
       AuthMicroservice__Jwt__Audience: "AuthMicroservice.Clients"
-      AuthMicroservice__TokenLinks__EmailVerificationBaseUrl: "http://localhost:8080/verify"
+      AuthMicroservice__EmailVerification__LinkBaseUrl: "http://localhost:8080/verify"
       AuthMicroservice__TokenLinks__PasswordResetBaseUrl: "http://localhost:8080/reset"
       AuthMicroservice__ExternalProviders__Google__Enabled: "${GOOGLE_OAUTH_ENABLED:-false}"
       AuthMicroservice__ExternalProviders__Google__ClientId: "${GOOGLE_CLIENT_ID:-}"
